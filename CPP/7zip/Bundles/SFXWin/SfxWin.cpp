@@ -28,6 +28,8 @@
 #include "../../UI/GUI/ExtractGUI.h"
 #include "../../UI/GUI/ExtractRes.h"
 
+#include "../../../../C/DllSecur.h"
+
 using namespace NWindows;
 using namespace NFile;
 using namespace NDir;
@@ -63,7 +65,7 @@ static DWORD GetDllVersion(LPCTSTR dllName)
 
 bool g_LVN_ITEMACTIVATE_Support = true;
 
-static const wchar_t *kUnknownExceptionMessage = L"ERROR: Unknown Error!";
+static const wchar_t * const kUnknownExceptionMessage = L"ERROR: Unknown Error!";
 
 void ErrorMessageForHRESULT(HRESULT res)
 {
@@ -220,6 +222,10 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE /* hPrevInstance */,
 
   try
   {
+    #ifdef _WIN32
+    LoadSecurityDlls();
+    #endif
+
     return WinMain2();
   }
   catch(const CNewException &)

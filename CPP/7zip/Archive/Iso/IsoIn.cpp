@@ -47,17 +47,13 @@ bool CBootInitialEntry::Parse(const Byte *p)
 
 AString CBootInitialEntry::GetName() const
 {
-  AString s = (Bootable ? "Boot" : "NotBoot");
+  AString s (Bootable ? "Boot" : "NotBoot");
   s += '-';
   
   if (BootMediaType < ARRAY_SIZE(kMediaTypes))
     s += kMediaTypes[BootMediaType];
   else
-  {
-    char name[16];
-    ConvertUInt32ToString(BootMediaType, name);
-    s += name;
-  }
+    s.Add_UInt32(BootMediaType);
   
   if (VendorSpec[0] == 1)
   {
@@ -184,7 +180,7 @@ UInt32 CInArchive::ReadDigits(int numDigits)
     Byte b = ReadByte();
     if (b < '0' || b > '9')
     {
-      if (b == 0) // it's bug in some CD's
+      if (b == 0 || b == ' ') // it's bug in some CD's
         b = '0';
       else
         throw CHeaderErrorException();
@@ -608,7 +604,7 @@ HRESULT CInArchive::Open2()
       for (UInt32 j = 0; j < ref.NumExtents; j++)
       {
         const CDir &item = ref.Dir->_subItems[ref.Index + j];
-        if (!item.IsDir())
+        if (!item.IsDir() && item.Size != 0)
           UpdatePhySize(item.ExtentLocation, item.Size);
       }
     }

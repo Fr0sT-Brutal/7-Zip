@@ -633,6 +633,14 @@ SOURCE=..\..\..\Windows\Synchronization.h
 # End Source File
 # Begin Source File
 
+SOURCE=..\..\..\Windows\System.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\..\Windows\System.h
+# End Source File
+# Begin Source File
+
 SOURCE=..\..\..\Windows\Window.cpp
 # End Source File
 # Begin Source File
@@ -888,6 +896,15 @@ SOURCE=..\..\..\..\C\Delta.h
 # End Source File
 # Begin Source File
 
+SOURCE=..\..\..\..\C\DllSecur.c
+# SUBTRACT CPP /YX /Yc /Yu
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\..\..\C\DllSecur.h
+# End Source File
+# Begin Source File
+
 SOURCE=..\..\..\..\C\Lzma2Dec.c
 # SUBTRACT CPP /YX /Yc /Yu
 # End Source File
@@ -897,12 +914,30 @@ SOURCE=..\..\..\..\C\Lzma2Dec.h
 # End Source File
 # Begin Source File
 
+SOURCE=..\..\..\..\C\Lzma2DecMt.c
+# SUBTRACT CPP /YX /Yc /Yu
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\..\..\C\Lzma2DecMt.h
+# End Source File
+# Begin Source File
+
 SOURCE=..\..\..\..\C\LzmaDec.c
 # SUBTRACT CPP /YX /Yc /Yu
 # End Source File
 # Begin Source File
 
 SOURCE=..\..\..\..\C\LzmaDec.h
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\..\..\C\MtDec.c
+# SUBTRACT CPP /YX /Yc /Yu
+# End Source File
+# Begin Source File
+
+SOURCE=..\..\..\..\C\MtDec.h
 # End Source File
 # Begin Source File
 

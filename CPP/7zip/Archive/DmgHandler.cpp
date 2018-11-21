@@ -19,6 +19,7 @@
 
 #include "../Compress/BZip2Decoder.h"
 #include "../Compress/CopyCoder.h"
+#include "../Compress/LzfseDecoder.h"
 #include "../Compress/ZlibDecoder.h"
 
 #include "Common/OutStreamWithCRC.h"
@@ -34,48 +35,35 @@
 
 static const Byte k_Base64Table[256] =
 {
-  64,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,
-  77,77,77,77,77,77,77,77,77,77,77,62,77,64,77,63,52,53,54,55,56,57,58,59,60,61,77,77,77,77,77,77,
-  77, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,77,77,77,77,77,
-  77,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,77,77,77,77,77,
-  77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,
-  77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,
-  77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,
-  77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77
+  66,77,77,77,77,77,77,77,77,65,65,77,77,65,77,77,
+  77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,
+  65,77,77,77,77,77,77,77,77,77,77,62,77,77,77,63,
+  52,53,54,55,56,57,58,59,60,61,77,77,77,64,77,77,
+  77, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+  15,16,17,18,19,20,21,22,23,24,25,77,77,77,77,77,
+  77,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+  41,42,43,44,45,46,47,48,49,50,51,77,77,77,77,77,
+  77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,
+  77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,
+  77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,
+  77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,
+  77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,
+  77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,
+  77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,
+  77,77,77,77,77,77,77,77,77,77,77,77,77,77,77,77
 };
 
 static Byte *Base64ToBin(Byte *dest, const char *src)
 {
   UInt32 val = 1;
-  UInt32 c = k_Base64Table[(Byte)(*src++)];
   
   for (;;)
   {
-    /*
-    UInt32 c = (Byte)(*src++);
-    if (c >= 'A')
-    {
-      if (c <= 'Z') c -= 'A';
-      else if (c >= 'a' && c <= 'z') c -= 'a' - 26;
-      else continue;
-    }
-    else if (c >= '0')
-    {
-      if (c <= '9') c += 52 - '0';
-      else if (c == '=') break;
-      else continue;
-    }
-    else if (c == '+') c = 62;
-    else if (c == '/') c = 63;
-    else if (c == 0) break;
-    else continue;
-    */
+    UInt32 c = k_Base64Table[(Byte)(*src++)];
 
-    // UInt32 c = k_Base64Table[(Byte)(*src++)];
     if (c < 64)
     {
       val = (val << 6) | c;
-      c = k_Base64Table[(Byte)(*src++)];
       if ((val & ((UInt32)1 << 24)) == 0)
         continue;
       dest[0] = (Byte)(val >> 16);
@@ -85,19 +73,41 @@ static Byte *Base64ToBin(Byte *dest, const char *src)
       val = 1;
       continue;
     }
-    if (c == 64)
+    
+    if (c == 65) // space
+      continue;
+    
+    if (c == 64) // '='
       break;
-    c = k_Base64Table[(Byte)(*src++)];
+    
+    if (c == 66 && val == 1) // end of string
+      return dest;
+    
+    return NULL;
   }
 
-  if (val >= ((UInt32)1 << 12))
+  if (val < (1 << 12))
+    return NULL;
+
+  if (val & (1 << 18))
   {
-    if (val >= ((UInt32)1 << 18))
-      *dest++ = (Byte)(val >> 16);
-    *dest++ = (Byte)(val);
+    *dest++ = (Byte)(val >> 10);
+    *dest++ = (Byte)(val >> 2);
   }
-  
-  return dest;
+  else if (k_Base64Table[(Byte)(*src++)] != 64) // '='
+    return NULL;
+  else
+    *dest++ = (Byte)(val >> 4);
+
+  for (;;)
+  {
+    Byte c = k_Base64Table[(Byte)(*src++)];
+    if (c == 65) // space
+      continue;
+    if (c == 66) // end of string
+      return dest;
+    return NULL;
+  }
 }
 
 
@@ -112,6 +122,7 @@ enum
   METHOD_ADC    = 0x80000004,
   METHOD_ZLIB   = 0x80000005,
   METHOD_BZIP2  = 0x80000006,
+  METHOD_LZFSE  = 0x80000007,
   METHOD_COMMENT = 0x7FFFFFFE, // is used to comment "+beg" and "+end" in extra field.
   METHOD_END    = 0xFFFFFFFF
 };
@@ -174,6 +185,30 @@ struct CExtraFile
 };
 #endif
 
+
+struct CForkPair
+{
+  UInt64 Offset;
+  UInt64 Len;
+  
+  void Parse(const Byte *p)
+  {
+    Offset = Get64(p);
+    Len = Get64(p + 8);
+  }
+
+  bool UpdateTop(UInt64 limit, UInt64 &top)
+  {
+    if (Offset > limit || Len > limit - Offset)
+      return false;
+    UInt64 top2 = Offset + Len;
+    if (top <= top2)
+      top = top2;
+    return true;
+  }
+};
+
+
 class CHandler:
   public IInArchive,
   public IInArchiveGetStream,
@@ -182,14 +217,20 @@ class CHandler:
   CMyComPtr<IInStream> _inStream;
   CObjectVector<CFile> _files;
   bool _masterCrcError;
+  bool _headersError;
 
+  UInt32 _dataStartOffset;
   UInt64 _startPos;
   UInt64 _phySize;
+
+  AString _name;
   
   #ifdef DMG_SHOW_RAW
   CObjectVector<CExtraFile> _extras;
   #endif
 
+  HRESULT ReadData(IInStream *stream, const CForkPair &pair, CByteBuffer &buf);
+  bool ParseBlob(const CByteBuffer &data);
   HRESULT Open2(IInStream *stream);
   HRESULT Extract(IInStream *stream);
 public:
@@ -238,26 +279,23 @@ void CMethods::GetString(AString &res) const
       case METHOD_ADC:    s = "ADC";   break;
       case METHOD_ZLIB:   s = "ZLIB";  break;
       case METHOD_BZIP2:  s = "BZip2"; break;
+      case METHOD_LZFSE:  s = "LZFSE"; break;
       default: ConvertUInt32ToString(type, buf); s = buf;
     }
-    res.Add_Space_if_NotEmpty();
-    res += s;
+    res.Add_OptSpaced(s);
   }
   
   for (i = 0; i < ChecksumTypes.Size(); i++)
   {
+    res.Add_Space_if_NotEmpty();
     UInt32 type = ChecksumTypes[i];
-    char buf[32];
-    const char *s;
     switch (type)
     {
-      case kCheckSumType_CRC: s = "CRC"; break;
+      case kCheckSumType_CRC: res += "CRC"; break;
       default:
-        ConvertUInt32ToString(type, MyStpCpy(buf, "Check"));
-        s = buf;
+        res += "Check";
+        res.Add_UInt32(type);
     }
-    res.Add_Space_if_NotEmpty();
-    res += s;
   }
 }
 
@@ -273,6 +311,10 @@ static const CAppleName k_Names[] =
   { true,  "hfs",  "Apple_HFS" },
   { true,  "hfsx", "Apple_HFSX" },
   { true,  "ufs",  "Apple_UFS" },
+
+  // efi_sys partition is FAT32, but it's not main file. So we use (IsFs = false)
+  { false,  "efi_sys", "C12A7328-F81F-11D2-BA4B-00A0C93EC93B" },
+
   { false, "free", "Apple_Free" },
   { false, "ddm",  "DDM" },
   { false, NULL,   "Apple_partition_map" },
@@ -292,6 +334,7 @@ static const Byte kProps[] =
   kpidCRC,
   kpidComment,
   kpidMethod
+  // kpidOffset
 };
 
 IMP_IInArchive_Props
@@ -299,7 +342,8 @@ IMP_IInArchive_Props
 static const Byte kArcProps[] =
 {
   kpidMethod,
-  kpidNumBlocks
+  kpidNumBlocks,
+  kpidComment
 };
 
 STDMETHODIMP CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value)
@@ -363,9 +407,30 @@ STDMETHODIMP CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value)
     case kpidWarning:
       if (_masterCrcError)
         prop = "Master CRC error";
+
+    case kpidWarningFlags:
+    {
+      UInt32 v = 0;
+      if (_headersError) v |= kpv_ErrorFlags_HeadersError;
+      if (v != 0)
+        prop = v;
       break;
+    }
+
     case kpidOffset: prop = _startPos; break;
     case kpidPhySize: prop = _phySize; break;
+
+    case kpidComment:
+      if (!_name.IsEmpty() && _name.Len() < 256)
+        prop = _name;
+      break;
+
+    case kpidName:
+      if (!_name.IsEmpty() && _name.Len() < 256)
+      {
+        prop = _name + ".dmg";
+      }
+      break;
   }
   prop.Detach(value);
   return S_OK;
@@ -452,7 +517,7 @@ HRESULT CFile::Parse(const Byte *p, UInt32 size)
   return S_OK;
 }
 
-static int FindKeyPair(const CXmlItem &item, const AString &key, const AString &nextTag)
+static int FindKeyPair(const CXmlItem &item, const char *key, const char *nextTag)
 {
   for (unsigned i = 0; i + 1 < item.SubItems.Size(); i++)
   {
@@ -463,7 +528,7 @@ static int FindKeyPair(const CXmlItem &item, const AString &key, const AString &
   return -1;
 }
 
-static const AString *GetStringFromKeyPair(const CXmlItem &item, const AString &key, const AString &nextTag)
+static const AString *GetStringFromKeyPair(const CXmlItem &item, const char *key, const char *nextTag)
 {
   int index = FindKeyPair(item, key, nextTag);
   if (index >= 0)
@@ -489,19 +554,119 @@ static inline bool IsKoly(const Byte *p)
   */
 }
 
+
+HRESULT CHandler::ReadData(IInStream *stream, const CForkPair &pair, CByteBuffer &buf)
+{
+  size_t size = (size_t)pair.Len;
+  if (size != pair.Len)
+    return E_OUTOFMEMORY;
+  buf.Alloc(size);
+  RINOK(stream->Seek(_startPos + pair.Offset, STREAM_SEEK_SET, NULL));
+  return ReadStream_FALSE(stream, buf, size);
+}
+
+
+bool CHandler::ParseBlob(const CByteBuffer &data)
+{
+  if (data.Size() < 12)
+    return false;
+  const Byte *p = (const Byte *)data;
+  if (Get32(p) != 0xFADE0CC0)
+    return true;
+  const UInt32 size = Get32(p + 4);
+  if (size != data.Size())
+    return false;
+  const UInt32 num = Get32(p + 8);
+  if (num > (size - 12) / 8)
+    return false;
+  
+  for (UInt32 i = 0; i < num; i++)
+  {
+    // UInt32 type = Get32(p + i * 8 + 12);
+    UInt32 offset = Get32(p + i * 8 + 12 + 4);
+    if (size - offset < 8)
+      return false;
+    const Byte *p2 = (const Byte *)data + offset;
+    const UInt32 magic = Get32(p2);
+    const UInt32 len = Get32(p2 + 4);
+    if (size - offset < len || len < 8)
+      return false;
+
+    #ifdef DMG_SHOW_RAW
+    CExtraFile &extra = _extras.AddNew();
+    extra.Name = "_blob_";
+    extra.Data.CopyFrom(p2, len);
+    #endif
+
+    if (magic == 0xFADE0C02)
+    {
+      #ifdef DMG_SHOW_RAW
+      extra.Name += "codedir";
+      #endif
+    
+      if (len < 11 * 4)
+        return false;
+      UInt32 idOffset = Get32(p2 + 0x14);
+      if (idOffset >= len)
+        return false;
+      UInt32 len2 = len - idOffset;
+      if (len2 < (1 << 10))
+        _name.SetFrom_CalcLen((const char *)(p2 + idOffset), len2);
+    }
+    #ifdef DMG_SHOW_RAW
+    else if (magic == 0xFADE0C01)
+      extra.Name += "requirements";
+    else if (magic == 0xFADE0B01)
+      extra.Name += "signed";
+    else
+    {
+      char temp[16];
+      ConvertUInt32ToHex8Digits(magic, temp);
+      extra.Name += temp;
+    }
+    #endif
+  }
+
+  return true;
+}
+
+
 HRESULT CHandler::Open2(IInStream *stream)
 {
+  /*
+  - usual dmg contains Koly Header at the end:
+  - rare case dmg contains Koly Header at the start.
+  */
+
+  _dataStartOffset = 0;
   RINOK(stream->Seek(0, STREAM_SEEK_CUR, &_startPos));
+
+  UInt64 fileSize = 0;
+  RINOK(stream->Seek(0, STREAM_SEEK_END, &fileSize));
+  RINOK(stream->Seek(_startPos, STREAM_SEEK_SET, NULL));
 
   Byte buf[HEADER_SIZE];
   RINOK(ReadStream_FALSE(stream, buf, HEADER_SIZE));
 
   UInt64 headerPos;
+  bool startKolyMode = false;
+
   if (IsKoly(buf))
+  {
+    // it can be normal koly-at-the-end or koly-at-the-start
     headerPos = _startPos;
+    if (_startPos <= (1 << 8))
+    {
+      // we want to support startKolyMode, even if there is
+      // some data before dmg file, like 128 bytes MacBin header
+      _dataStartOffset = HEADER_SIZE;
+      startKolyMode = true;
+    }
+  }
   else
   {
-    RINOK(stream->Seek(0, STREAM_SEEK_END, &headerPos));
+    // we check only koly-at-the-end
+    headerPos = fileSize;
     if (headerPos < HEADER_SIZE)
       return S_FALSE;
     headerPos -= HEADER_SIZE;
@@ -513,34 +678,81 @@ HRESULT CHandler::Open2(IInStream *stream)
 
   // UInt32 flags = Get32(buf + 12);
   // UInt64 runningDataForkOffset = Get64(buf + 0x10);
-  UInt64 dataForkOffset = Get64(buf + 0x18);
-  UInt64 dataForkLen = Get64(buf + 0x20);
-  UInt64 rsrcOffset = Get64(buf + 0x28);
-  UInt64 rsrcLen = Get64(buf + 0x30);
+  
+  CForkPair dataForkPair, rsrcPair, xmlPair, blobPair;
+  
+  dataForkPair.Parse(buf + 0x18);
+  rsrcPair.Parse(buf + 0x28);
+  xmlPair.Parse(buf + 0xD8);
+  blobPair.Parse(buf + 0x128);
+
   // UInt32 segmentNumber = Get32(buf + 0x38);
   // UInt32 segmentCount = Get32(buf + 0x3C);
   // Byte segmentGUID[16];
   // CChecksum dataForkChecksum;
   // dataForkChecksum.Parse(buf + 0x50);
-  UInt64 xmlOffset = Get64(buf + 0xD8);
-  UInt64 xmlLen = Get64(buf + 0xE0);
 
-  if (   headerPos < dataForkOffset
-      || headerPos - dataForkOffset < dataForkLen
-      || headerPos < rsrcOffset
-      || headerPos - rsrcOffset < rsrcLen
-      || headerPos < xmlOffset
-      || headerPos - xmlOffset < xmlLen)
-    return S_FALSE;
+  UInt64 top = 0;
+  UInt64 limit = startKolyMode ? fileSize : headerPos;
 
-  UInt64 totalLen = dataForkLen + rsrcLen + xmlLen;
-  if (totalLen > headerPos)
-    return S_FALSE;
-  _startPos = headerPos - totalLen;
-  _phySize = totalLen + HEADER_SIZE;
-  headerPos = totalLen;
+  if (!dataForkPair.UpdateTop(limit, top)) return S_FALSE;
+  if (!xmlPair.UpdateTop(limit, top)) return S_FALSE;
+  if (!rsrcPair.UpdateTop(limit, top)) return S_FALSE;
+
+  /* Some old dmg files contain garbage data in blobPair field.
+     So we need to ignore such garbage case;
+     And we still need to detect offset of start of archive for "parser" mode. */
+
+  bool useBlob = blobPair.UpdateTop(limit, top);
+
+
+  if (startKolyMode)
+    _phySize = top;
+  else
+  {
+    _phySize = headerPos + HEADER_SIZE;
+    _startPos = 0;
+    if (top != headerPos)
+    {
+      /*
+      if expected absolute offset is not equal to real header offset,
+      2 cases are possible:
+        - additional (unknown) headers
+        - archive with offset.
+       So we try to read XML with absolute offset to select from these two ways.
+      */
+    CForkPair xmlPair2 = xmlPair;
+    const char *sz = "<?xml version";
+    const unsigned len = (unsigned)strlen(sz);
+    if (xmlPair2.Len > len)
+      xmlPair2.Len = len;
+    CByteBuffer buf2;
+    if (ReadData(stream, xmlPair2, buf2) != S_OK
+        || memcmp(buf2, sz, len) != 0)
+    {
+      // if absolute offset is not OK, probably it's archive with offset
+      _startPos = headerPos - top;
+      _phySize = top + HEADER_SIZE;
+    }
+    }
+  }
 
   // Byte reserved[0x78]
+
+  if (useBlob && blobPair.Len != 0)
+  {
+    #ifdef DMG_SHOW_RAW
+    CExtraFile &extra = _extras.AddNew();
+    extra.Name = "_blob.bin";
+    CByteBuffer &blobBuf = extra.Data;
+    #else
+    CByteBuffer blobBuf;
+    #endif
+    RINOK(ReadData(stream, blobPair, blobBuf));
+    if (!ParseBlob(blobBuf))
+      _headersError = true;
+  }
+
 
   CChecksum masterChecksum;
   masterChecksum.Parse(buf + 0x160);
@@ -553,7 +765,7 @@ HRESULT CHandler::Open2(IInStream *stream)
 
   // We don't know the size of the field "offset" in rsrc.
   // We suppose that it uses 24 bits. So we use Rsrc, only if the rsrcLen < (1 << 24).
-  bool useRsrc = (rsrcLen > RSRC_HEAD_SIZE && rsrcLen < ((UInt32)1 << 24));
+  bool useRsrc = (rsrcPair.Len > RSRC_HEAD_SIZE && rsrcPair.Len < ((UInt32)1 << 24));
   // useRsrc = false;
 
   if (useRsrc)
@@ -566,21 +778,18 @@ HRESULT CHandler::Open2(IInStream *stream)
     CByteBuffer rsrcBuf;
     #endif
 
-    size_t rsrcLenT = (size_t)rsrcLen;
-    rsrcBuf.Alloc(rsrcLenT);
-    RINOK(stream->Seek(_startPos + rsrcOffset, STREAM_SEEK_SET, NULL));
-    RINOK(ReadStream_FALSE(stream, rsrcBuf, rsrcLenT));
+    RINOK(ReadData(stream, rsrcPair, rsrcBuf));
 
     const Byte *p = rsrcBuf;
     UInt32 headSize = Get32(p + 0);
     UInt32 footerOffset = Get32(p + 4);
     UInt32 mainDataSize = Get32(p + 8);
     UInt32 footerSize = Get32(p + 12);
-    if (headSize != RSRC_HEAD_SIZE ||
-        footerOffset >= rsrcLenT ||
-        mainDataSize >= rsrcLenT ||
-        footerOffset + footerSize != rsrcLenT ||
-        footerOffset != headSize + mainDataSize)
+    if (headSize != RSRC_HEAD_SIZE
+        || footerOffset >= rsrcPair.Len
+        || mainDataSize >= rsrcPair.Len
+        || footerOffset + footerSize != rsrcPair.Len
+        || footerOffset != headSize + mainDataSize)
       return S_FALSE;
     if (footerSize < 16)
       return S_FALSE;
@@ -591,7 +800,7 @@ HRESULT CHandler::Open2(IInStream *stream)
 
     if ((UInt32)Get16(p + 0x18) != 0x1C)
       return S_FALSE;
-    UInt32 namesOffset = Get16(p + 0x1A);
+    const UInt32 namesOffset = Get16(p + 0x1A);
     if (namesOffset > footerSize)
       return S_FALSE;
     
@@ -603,12 +812,15 @@ HRESULT CHandler::Open2(IInStream *stream)
     {
       const Byte *p2 = p + 0x1E + i * 8;
     
-      UInt32 typeId = Get32(p2);
+      const UInt32 typeId = Get32(p2);
+      
+      #ifndef DMG_SHOW_RAW
       if (typeId != 0x626C6B78) // blkx
         continue;
+      #endif
       
-      UInt32 numFiles = (UInt32)Get16(p2 + 4) + 1;
-      UInt32 offs = Get16(p2 + 6);
+      const UInt32 numFiles = (UInt32)Get16(p2 + 4) + 1;
+      const UInt32 offs = Get16(p2 + 6);
       if (0x1C + offs + 12 * numFiles > namesOffset)
         return S_FALSE;
 
@@ -616,7 +828,7 @@ HRESULT CHandler::Open2(IInStream *stream)
       {
         const Byte *p3 = p + 0x1C + offs + k * 12;
         // UInt32 id = Get16(p3);
-        UInt32 namePos = Get16(p3 + 2);
+        const UInt32 namePos = Get16(p3 + 2);
         // Byte attributes = p3[4]; // = 0x50 for blkx
         // we don't know how many bits we can use. So we use 24 bits only
         UInt32 blockOffset = Get32(p3 + 4);
@@ -625,21 +837,12 @@ HRESULT CHandler::Open2(IInStream *stream)
         if (blockOffset + 4 >= mainDataSize)
           return S_FALSE;
         const Byte *pBlock = rsrcBuf + headSize + blockOffset;
-        UInt32 blockSize = Get32(pBlock);
-              
-        #ifdef DMG_SHOW_RAW
-        {
-          CExtraFile &extra = _extras.AddNew();
-          {
-            char extraName[16];
-            ConvertUInt32ToString(_files.Size(), extraName);
-            extra.Name = extraName;
-          }
-          extra.Data.CopyFrom(pBlock + 4, blockSize);
-        }
-        #endif
+        const UInt32 blockSize = Get32(pBlock);
+        if (mainDataSize - (blockOffset + 4) < blockSize)
+          return S_FALSE;
         
-        CFile &file = _files.AddNew();
+        AString name;
+        
         if (namePos != 0xFFFF)
         {
           UInt32 namesBlockSize = footerSize - namesOffset;
@@ -654,22 +857,56 @@ HRESULT CHandler::Open2(IInStream *stream)
             Byte c = namePtr[r];
             if (c < 0x20 || c >= 0x80)
               break;
-            file.Name += (char)c;
+            name += (char)c;
           }
         }
-        RINOK(file.Parse(pBlock + 4, blockSize));
+        
+        if (typeId == 0x626C6B78) // blkx
+        {
+          CFile &file = _files.AddNew();
+          file.Name = name;
+          RINOK(file.Parse(pBlock + 4, blockSize));
+        }
+        
+        #ifdef DMG_SHOW_RAW
+        {
+          AString name2;
+
+          name2.Add_UInt32(i);
+          name2 += '_';
+
+          {
+            char temp[4 + 1] = { 0 };
+            memcpy(temp, p2, 4);
+            name2 += temp;
+          }
+          name2.Trim();
+          name2 += '_';
+          name2.Add_UInt32(k);
+          
+          if (!name.IsEmpty())
+          {
+            name2 += '_';
+            name2 += name;
+          }
+          
+          CExtraFile &extra = _extras.AddNew();
+          extra.Name = name2;
+          extra.Data.CopyFrom(pBlock + 4, blockSize);
+        }
+        #endif
       }
     }
   }
   else
   {
-    if (xmlLen >= kXmlSizeMax || xmlLen == 0)
+    if (xmlPair.Len >= kXmlSizeMax || xmlPair.Len == 0)
       return S_FALSE;
-    size_t size = (size_t)xmlLen;
-    if (size != xmlLen)
+    size_t size = (size_t)xmlPair.Len;
+    if (size != xmlPair.Len)
       return S_FALSE;
 
-    RINOK(stream->Seek(_startPos + dataForkLen, STREAM_SEEK_SET, NULL));
+    RINOK(stream->Seek(_startPos + xmlPair.Offset, STREAM_SEEK_SET, NULL));
     
     CXml xml;
     {
@@ -720,14 +957,16 @@ HRESULT CHandler::Open2(IInStream *stream)
           return S_FALSE;
         destLen = dataString->Len() / 4 * 3 + 4;
         rawBuf.Alloc(destLen);
-        destLen = (unsigned)(Base64ToBin(rawBuf, *dataString) - rawBuf);
+        {
+          const Byte *endPtr = Base64ToBin(rawBuf, *dataString);
+          if (!endPtr)
+            return S_FALSE;
+          destLen = (unsigned)(endPtr - (const Byte *)rawBuf);
+        }
+        
         #ifdef DMG_SHOW_RAW
         CExtraFile &extra = _extras.AddNew();
-        {
-          char extraName[16];
-          ConvertUInt32ToString(_files.Size(), extraName);
-          extra.Name = extraName;
-        }
+        extra.Name.Add_UInt32(_files.Size());
         extra.Data.CopyFrom(rawBuf, destLen);
         #endif
       }
@@ -785,6 +1024,8 @@ STDMETHODIMP CHandler::Close()
   _inStream.Release();
   _files.Clear();
   _masterCrcError = false;
+  _headersError = false;
+  _name.Empty();
   #ifdef DMG_SHOW_RAW
   _extras.Clear();
   #endif
@@ -838,6 +1079,14 @@ STDMETHODIMP CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
         break;
       }
 
+      /*
+      case kpidOffset:
+      {
+        prop = item.StartPos;
+        break;
+      }
+      */
+
       case kpidMethod:
       {
         CMethods m;
@@ -852,9 +1101,7 @@ STDMETHODIMP CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
       case kpidPath:
       {
         UString name;
-        wchar_t s[16];
-        ConvertUInt32ToString(index, s);
-        name = s;
+        name.Add_UInt32(index);
         unsigned num = 10;
         unsigned numDigits;
         for (numDigits = 1; num < _files.Size(); numDigits++)
@@ -893,7 +1140,7 @@ STDMETHODIMP CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
           }
           UString name2;
           ConvertUTF8ToUnicode(subName, name2);
-          name += L'.';
+          name += '.';
           name += name2;
         }
         else
@@ -901,7 +1148,7 @@ STDMETHODIMP CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
           UString name2;
           ConvertUTF8ToUnicode(item.Name, name2);
           if (!name2.IsEmpty())
-            name.AddAscii(" - ");
+            name += "_";
           name += name2;
         }
         prop = name;
@@ -1053,6 +1300,11 @@ STDMETHODIMP CAdcDecoder::Code(ISequentialInStream *inStream,
 }
 
 
+
+
+
+
+
 STDMETHODIMP CHandler::Extract(const UInt32 *indices, UInt32 numItems,
     Int32 testMode, IArchiveExtractCallback *extractCallback)
 {
@@ -1097,6 +1349,9 @@ STDMETHODIMP CHandler::Extract(const UInt32 *indices, UInt32 numItems,
 
   CAdcDecoder *adcCoderSpec = new CAdcDecoder();
   CMyComPtr<ICompressCoder> adcCoder = adcCoderSpec;
+
+  NCompress::NLzfse::CDecoder *lzfseCoderSpec = new NCompress::NLzfse::CDecoder();
+  CMyComPtr<ICompressCoder> lzfseCoder = lzfseCoderSpec;
 
   CLocalProgress *lps = new CLocalProgress;
   CMyComPtr<ICompressProgressInfo> progress = lps;
@@ -1175,7 +1430,7 @@ STDMETHODIMP CHandler::Extract(const UInt32 *indices, UInt32 numItems,
             break;
           }
 
-          RINOK(_inStream->Seek(_startPos + item.StartPos + block.PackPos, STREAM_SEEK_SET, NULL));
+          RINOK(_inStream->Seek(_startPos + _dataStartOffset + item.StartPos + block.PackPos, STREAM_SEEK_SET, NULL));
           streamSpec->Init(block.PackSize);
           bool realMethod = true;
           outStreamSpec->Init(block.UnpSize);
@@ -1223,6 +1478,12 @@ STDMETHODIMP CHandler::Extract(const UInt32 *indices, UInt32 numItems,
               if (res == S_OK)
                 if (bzip2CoderSpec->GetInputProcessedSize() != block.PackSize)
                   opRes = NExtract::NOperationResult::kDataError;
+              break;
+            }
+
+            case METHOD_LZFSE:
+            {
+              res = lzfseCoder->Code(inStream, outStream, &block.PackSize, &block.UnpSize, progress);
               break;
             }
             
@@ -1295,6 +1556,9 @@ class CInStream:
 
   CAdcDecoder *adcCoderSpec;
   CMyComPtr<ICompressCoder> adcCoder;
+
+  NCompress::NLzfse::CDecoder *lzfseCoderSpec;
+  CMyComPtr<ICompressCoder> lzfseCoder;
 
   CBufPtrSeqOutStream *outStreamSpec;
   CMyComPtr<ISequentialOutStream> outStream;
@@ -1457,6 +1721,15 @@ STDMETHODIMP CInStream::Read(void *data, UInt32 size, UInt32 *processedSize)
             if (res == S_OK && bzip2CoderSpec->GetInputProcessedSize() != block.PackSize)
               res = S_FALSE;
             break;
+
+          case METHOD_LZFSE:
+            if (!lzfseCoder)
+            {
+              lzfseCoderSpec = new NCompress::NLzfse::CDecoder();
+              lzfseCoder = lzfseCoderSpec;
+            }
+            res = lzfseCoder->Code(inStream, outStream, &block.PackSize, &block.UnpSize, NULL);
+            break;
             
           default:
             return E_FAIL;
@@ -1544,6 +1817,7 @@ STDMETHODIMP CHandler::GetStream(UInt32 index, ISequentialInStream **stream)
       case METHOD_ADC:
       case METHOD_ZLIB:
       case METHOD_BZIP2:
+      case METHOD_LZFSE:
       case METHOD_END:
         break;
       default:
@@ -1553,7 +1827,7 @@ STDMETHODIMP CHandler::GetStream(UInt32 index, ISequentialInStream **stream)
   
   spec->Stream = _inStream;
   spec->Size = spec->File->Size;
-  RINOK(spec->InitAndSeek(_startPos));
+  RINOK(spec->InitAndSeek(_startPos + _dataStartOffset));
   *stream = specStream.Detach();
   return S_OK;
   

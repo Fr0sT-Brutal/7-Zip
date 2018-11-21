@@ -1,5 +1,5 @@
 /* Sha1.c -- SHA-1 Hash
-2015-05-10 : Igor Pavlov : Public domain
+2017-04-03 : Igor Pavlov : Public domain
 This code is based on public domain code of Steve Reid from Wei Dai's Crypto++ library. */
 
 #include "Precomp.h"
@@ -62,8 +62,8 @@ This code is based on public domain code of Steve Reid from Wei Dai's Crypto++ l
 
 #else
   
-#define RX_15  { unsigned i; for (i = 0; i < 15; i += 5) { RX_5(R0, i); } }
-#define RX_20(rx, ii)  { unsigned i; i = ii; for (; i < ii + 20; i += 5) { RX_5(rx, i); } }
+#define RX_15  { size_t i; for (i = 0; i < 15; i += 5) { RX_5(R0, i); } }
+#define RX_20(rx, ii)  { size_t i; i = ii; for (; i < ii + 20; i += 5) { RX_5(rx, i); } }
 
 #endif
 
@@ -131,7 +131,7 @@ void Sha1_UpdateBlock_Rar(CSha1 *p, UInt32 *data, int returnRes)
 
   if (returnRes)
   {
-    unsigned i;
+    size_t i;
     for (i = 0 ; i < SHA1_NUM_BLOCK_WORDS; i++)
       data[i] = W[kNumW - SHA1_NUM_BLOCK_WORDS + i];
   }
@@ -151,18 +151,23 @@ void Sha1_Update(CSha1 *p, const Byte *data, size_t size)
   
   if (pos2 != 0)
   {
-    UInt32 w = ((UInt32)data[0]) << 24;
-    if (--size && pos2 < 3)
+    UInt32 w;
+    pos2 = (3 - pos2) * 8;
+    w = ((UInt32)*data++) << pos2;
+    if (--size && pos2)
     {
-      w |= ((UInt32)data[1]) << 16;
-      if (--size && pos2 < 2)
+      pos2 -= 8;
+      w |= ((UInt32)*data++) << pos2;
+      if (--size && pos2)
       {
-        w |= ((UInt32)data[2]) << 8;
-        --size;
+        pos2 -= 8;
+        w |= ((UInt32)*data++) << pos2;
+        size--;
       }
     }
-    data += 4 - pos2;
-    p->buffer[pos++] |= (w >> (8 * pos2));
+    p->buffer[pos] |= w;
+    if (pos2 == 0)
+      pos++;
   }
 
   for (;;)
@@ -171,7 +176,7 @@ void Sha1_Update(CSha1 *p, const Byte *data, size_t size)
     {
       for (;;)
       {
-        unsigned i;
+        size_t i;
         Sha1_UpdateBlock(p);
         if (size < SHA1_BLOCK_SIZE)
           break;
@@ -207,7 +212,7 @@ void Sha1_Update(CSha1 *p, const Byte *data, size_t size)
   }
 }
 
-void Sha1_Update_Rar(CSha1 *p, Byte *data, size_t size, int rar350Mode)
+void Sha1_Update_Rar(CSha1 *p, Byte *data, size_t size /* , int rar350Mode */)
 {
   int returnRes = False;
   
@@ -233,7 +238,7 @@ void Sha1_Update_Rar(CSha1 *p, Byte *data, size_t size, int rar350Mode)
       Sha1_UpdateBlock_Rar(p, p->buffer, returnRes);
       if (returnRes)
       {
-        unsigned i;
+        size_t i;
         for (i = 0; i < SHA1_NUM_BLOCK_WORDS; i++)
         {
           UInt32 d = p->buffer[i];
@@ -241,7 +246,8 @@ void Sha1_Update_Rar(CSha1 *p, Byte *data, size_t size, int rar350Mode)
           SetUi32(prev, d);
         }
       }
-      returnRes = rar350Mode;
+      // returnRes = rar350Mode;
+      returnRes = True;
     }
   }
 }

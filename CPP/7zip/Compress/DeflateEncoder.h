@@ -46,11 +46,6 @@ struct CTables: public CLevels
   void InitStructures();
 };
 
-typedef struct _CSeqInStream
-{
-  ISeqInStream SeqInStream;
-  ISequentialInStream *RealStream;
-} CSeqInStream;
 
 struct CEncProps
 {
@@ -75,8 +70,6 @@ class CCoder
 {
   CMatchFinder _lzInWindow;
   CBitlEncoder m_OutStream;
-
-  CSeqInStream _seqInStream;
 
 public:
   CCodeValue *m_Values;
@@ -190,7 +183,7 @@ class CCOMCoder :
   public CCoder
 {
 public:
-  MY_UNKNOWN_IMP1(ICompressSetCoderProperties)
+  MY_UNKNOWN_IMP2(ICompressCoder, ICompressSetCoderProperties)
   CCOMCoder(): CCoder(false) {};
   STDMETHOD(Code)(ISequentialInStream *inStream, ISequentialOutStream *outStream,
       const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo *progress);
@@ -204,7 +197,7 @@ class CCOMCoder64 :
   public CCoder
 {
 public:
-  MY_UNKNOWN_IMP1(ICompressSetCoderProperties)
+  MY_UNKNOWN_IMP2(ICompressCoder, ICompressSetCoderProperties)
   CCOMCoder64(): CCoder(true) {};
   STDMETHOD(Code)(ISequentialInStream *inStream, ISequentialOutStream *outStream,
       const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo *progress);

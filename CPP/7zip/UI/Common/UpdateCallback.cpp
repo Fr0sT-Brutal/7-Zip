@@ -51,8 +51,11 @@ CArchiveUpdateCallback::CArchiveUpdateCallback():
     ArcItems(NULL),
     UpdatePairs(NULL),
     NewNames(NULL),
+    CommentIndex(-1),
+    Comment(NULL),
     
     ShareForWrite(false),
+    StopAfterOpenError(false),
     StdInMode(false),
     
     KeepOriginalItemNames(false),
@@ -219,9 +222,7 @@ STDMETHODIMP CArchiveUpdateCallback::GetRawProp(UInt32 index, PROPID propID, con
       return Arc->GetRawProps->GetRawProp(
           ArcItems ? (*ArcItems)[up.ArcIndex].IndexInServer : up.ArcIndex,
           propID, data, dataSize, propType);
-
     {
-      const CUpdatePair2 &up = (*UpdatePairs)[index];
       /*
       if (!up.NewData)
         return E_FAIL;
@@ -302,7 +303,7 @@ static UString GetRelativePath(const UString &to, const UString &from)
   unsigned k;
   
   for (k = i + 1; k < partsFrom.Size(); k++)
-    s += L".." WSTRING_PATH_SEPARATOR;
+    s += ".." STRING_PATH_SEPARATOR;
   
   for (k = i; k < partsTo.Size(); k++)
   {
@@ -346,7 +347,8 @@ STDMETHODIMP CArchiveUpdateCallback::GetProperty(UInt32 index, PROPID propID, PR
         // if (di.IsDir())
         {
           CReparseAttr attr;
-          if (attr.Parse(di.ReparseData, di.ReparseData.Size()))
+          DWORD errorCode = 0;
+          if (attr.Parse(di.ReparseData, di.ReparseData.Size(), errorCode))
           {
             UString simpleName = attr.GetPath();
             if (attr.IsRelative())
@@ -398,6 +400,11 @@ STDMETHODIMP CArchiveUpdateCallback::GetProperty(UInt32 index, PROPID propID, PR
   }
   else if (propID == kpidPath && up.NewNameIndex >= 0)
     prop = (*NewNames)[up.NewNameIndex];
+  else if (propID == kpidComment
+      && CommentIndex >= 0
+      && (unsigned)CommentIndex == index
+      && Comment)
+    prop = *Comment;
   else if (propID == kpidShortName && up.NewNameIndex >= 0 && up.IsMainRenameItem)
   {
     // we can generate new ShortName here;
@@ -507,7 +514,12 @@ STDMETHODIMP CArchiveUpdateCallback::GetStream2(UInt32 index, ISequentialInStrea
     #endif
     if (!inStreamSpec->OpenShared(path, ShareForWrite))
     {
-      return Callback->OpenFileError(path, ::GetLastError());
+      DWORD error = ::GetLastError();
+      HRESULT hres = Callback->OpenFileError(path, error);
+      if (StopAfterOpenError)
+        if (hres == S_OK || hres == S_FALSE)
+          return HRESULT_FROM_WIN32(error);
+      return hres;
     }
 
     if (StoreHardLinks)
@@ -692,13 +704,13 @@ STDMETHODIMP CArchiveUpdateCallback::GetVolumeSize(UInt32 index, UInt64 *size)
 STDMETHODIMP CArchiveUpdateCallback::GetVolumeStream(UInt32 index, ISequentialOutStream **volumeStream)
 {
   COM_TRY_BEGIN
-  FChar temp[16];
+  char temp[16];
   ConvertUInt32ToString(index + 1, temp);
-  FString res = temp;
+  FString res (temp);
   while (res.Len() < 2)
     res.InsertAtFront(FTEXT('0'));
   FString fileName = VolName;
-  fileName += FTEXT('.');
+  fileName += '.';
   fileName += res;
   fileName += VolExt;
   COutFileStream *streamSpec = new COutFileStream;

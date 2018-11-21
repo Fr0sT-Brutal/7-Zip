@@ -18,8 +18,8 @@ using namespace NWindows;
 using namespace NFile;
 using namespace NDir;
 
-static LPCWSTR kCantFindArchive = L"Can not find archive file";
-static LPCWSTR kCantOpenArchive = L"Can not open the file as archive";
+static LPCSTR const kCantFindArchive = "Can not find archive file";
+static LPCSTR const kCantOpenArchive = "Can not open the file as archive";
 
 struct CThreadExtracting
 {
@@ -55,8 +55,7 @@ struct CThreadExtracting
     Result = ArchiveLink.Open2(options, ExtractCallbackSpec);
     if (Result != S_OK)
     {
-      if (Result != S_OK)
-        ErrorMessage = kCantOpenArchive;
+      ErrorMessage = kCantOpenArchive;
       return;
     }
 
@@ -74,7 +73,7 @@ struct CThreadExtracting
       return;
     }
 
-    ExtractCallbackSpec->Init(ArchiveLink.GetArchive(), dirPath, L"Default", fi.MTime, 0);
+    ExtractCallbackSpec->Init(ArchiveLink.GetArchive(), dirPath, (UString)"Default", fi.MTime, 0);
 
     Result = ArchiveLink.GetArchive()->Extract(0, (UInt32)(Int32)-1 , BoolToInt(false), ExtractCallback);
   }

@@ -8,7 +8,6 @@
 
 #include "../../../../C/Alloc.h"
 
-#include "../../../Common/IntToString.h"
 #include "../../../Common/StringConvert.h"
 #include "../../../Common/StringToInt.h"
 
@@ -43,16 +42,21 @@ using namespace NFind;
 #define MENU_HEIGHT 26
 
 bool g_RAM_Size_Defined;
+bool g_LargePagesMode = false;
+bool g_OpenArchive = false;
+
+static bool g_Maximized = false;
+
 UInt64 g_RAM_Size;
 
 #ifdef _WIN32
 HINSTANCE g_hInstance;
 #endif
+
 HWND g_HWND;
-bool g_OpenArchive = false;
+
 static UString g_MainPath;
 static UString g_ArcFormat;
-static bool g_Maximized = false;
 
 // HRESULT LoadGlobalCodecs();
 void FreeGlobalCodecs();
@@ -157,6 +161,7 @@ static bool g_CanChangeSplitter = false;
 static UInt32 g_SplitterPos = 0;
 static CSplitterPos g_Splitter;
 static bool g_PanelsInfoDefined = false;
+static bool g_WindowWasCreated = false;
 
 static int g_StartCaptureMousePos;
 static int g_StartCaptureSplitterPos;
@@ -165,7 +170,7 @@ CApp g_App;
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 
-const wchar_t *kWindowClass = L"FM";
+static const wchar_t * const kWindowClass = L"FM";
 
 #ifdef UNDER_CE
 #define WS_OVERLAPPEDWINDOW ( \
@@ -184,7 +189,7 @@ static BOOL InitInstance(int nCmdShow)
 
   // LoadString(hInstance, IDS_CLASS, windowClass, MAX_LOADSTRING);
 
-  UString title = L"7-Zip"; // LangString(IDS_APP_TITLE, 0x03000000);
+  UString title ("7-Zip"); // LangString(IDS_APP_TITLE, 0x03000000);
 
   /*
   //If it is already running, then focus on the window
@@ -238,8 +243,9 @@ static BOOL InitInstance(int nCmdShow)
 
   if (windowPosIsRead)
   {
-    // x = rect.left;
-    // y = rect.top;
+    x = info.rect.left;
+    y = info.rect.top;
+    
     xSize = RECT_SIZE_X(info.rect);
     ySize = RECT_SIZE_Y(info.rect);
   }
@@ -258,6 +264,7 @@ static BOOL InitInstance(int nCmdShow)
     info.numPanels = kNumDefaultPanels;
     info.currentPanel = 0;
   }
+
   g_App.NumPanels = info.numPanels;
   g_App.LastFocusedPanel = info.currentPanel;
 
@@ -376,7 +383,11 @@ static void SetMemoryLock()
     NSecurity::AddLockMemoryPrivilege();
 
   if (ReadLockMemoryEnable())
-    NSecurity::EnablePrivilege_LockMemory();
+  if (NSecurity::Get_LargePages_RiskLevel() == 0)
+  {
+    // note: child processes can inherit that Privilege
+    g_LargePagesMode = NSecurity::EnablePrivilege_LockMemory();
+  }
 }
 
 bool g_SymLink_Supported = false;
@@ -423,8 +434,13 @@ static void ErrorMessage(const wchar_t *s)
   MessageBoxW(0, s, L"7-Zip", MB_ICONERROR);
 }
 
+static void ErrorMessage(const char *s)
+{
+  ErrorMessage(GetUnicodeString(s));
+}
 
-#define NT_CHECK_FAIL_ACTION ErrorMessage(L"Unsupported Windows version"); return 1;
+
+#define NT_CHECK_FAIL_ACTION ErrorMessage("Unsupported Windows version"); return 1;
 
 static int WINAPI WinMain2(int nCmdShow)
 {
@@ -664,7 +680,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /* hPrevInstance */,
   }
   catch(const AString &s)
   {
-    ErrorMessage(GetUnicodeString(s));
+    ErrorMessage(s.Ptr());
     return 1;
   }
   catch(const wchar_t *s)
@@ -674,19 +690,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /* hPrevInstance */,
   }
   catch(const char *s)
   {
-    ErrorMessage(GetUnicodeString(s));
+    ErrorMessage(s);
     return 1;
   }
   catch(int v)
   {
-    wchar_t s[32];
-    ConvertUInt32ToString(v, s);
-    ErrorMessage(UString(L"Error: ") + s);
+    AString e ("Error: ");
+    e.Add_UInt32(v);
+    ErrorMessage(e);
     return 1;
   }
   catch(...)
   {
-    ErrorMessage(L"Unknown error");
+    ErrorMessage("Unknown error");
     return 1;
   }
 }
@@ -832,26 +848,30 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
           needOpenFile = true;
       }
       
-      HRESULT res = g_App.Create(hWnd, fullPath, g_ArcFormat, xSizes, archiveIsOpened, encrypted);
+      HRESULT res = g_App.Create(hWnd, fullPath, g_ArcFormat, xSizes,
+          needOpenFile,
+          archiveIsOpened, encrypted);
 
       if (res == E_ABORT)
         return -1;
       
       if (needOpenFile && !archiveIsOpened || res != S_OK)
       {
-        UString message = L"Error";
+        UString m ("Error");
         if (res == S_FALSE || res == S_OK)
         {
-          message = MyFormatNew(encrypted ?
+          m = MyFormatNew(encrypted ?
                 IDS_CANT_OPEN_ENCRYPTED_ARCHIVE :
                 IDS_CANT_OPEN_ARCHIVE,
               fullPath);
         }
         else if (res != S_OK)
-          message = HResultToMessage(res);
-        ErrorMessage(message);
+          m = HResultToMessage(res);
+        ErrorMessage(m);
         return -1;
       }
+
+      g_WindowWasCreated = true;
       
       // g_SplitterPos = 0;
 
@@ -867,9 +887,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
       RevokeDragDrop(hWnd);
       g_App._dropTarget.Release();
 
-      g_App.Save();
+      if (g_WindowWasCreated)
+        g_App.Save();
+    
       g_App.Release();
-      SaveWindowInfo(hWnd);
+      
+      if (g_WindowWasCreated)
+        SaveWindowInfo(hWnd);
 
       g_ExitEventLauncher.Exit(true);
       PostQuitMessage(0);

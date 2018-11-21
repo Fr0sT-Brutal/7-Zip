@@ -51,13 +51,13 @@ void MY_FAST_CALL Crc16GenerateTable(void)
   for (i = 0; i < 256; i++)
   {
     UInt32 r = (i << 8);
-    for (int j = 8; j > 0; j--)
-      r = ((r & 0x8000) ? ((r << 1) ^ kCrc16Poly) : (r << 1)) & 0xFFFF;
+    for (unsigned j = 0; j < 8; j++)
+      r = ((r << 1) ^ (kCrc16Poly & ((UInt32)0 - (r >> 15)))) & 0xFFFF;
     g_Crc16Table[i] = (UInt16)r;
   }
 }
 
-UInt16 MY_FAST_CALL Crc16_Update(UInt16 v, const void *data, size_t size)
+UInt32 MY_FAST_CALL Crc16_Update(UInt32 v, const void *data, size_t size)
 {
   const Byte *p = (const Byte *)data;
   for (; size > 0 ; size--, p++)
@@ -65,12 +65,12 @@ UInt16 MY_FAST_CALL Crc16_Update(UInt16 v, const void *data, size_t size)
   return v;
 }
 
-UInt16 MY_FAST_CALL Crc16Calc(const void *data, size_t size)
+UInt32 MY_FAST_CALL Crc16Calc(const void *data, size_t size)
 {
   return Crc16_Update(CRC16_INIT_VAL, data, size);
 }
 
-struct CCrc16TableInit { CCrc16TableInit() { Crc16GenerateTable(); } } g_Crc16TableInit;
+static struct CCrc16TableInit { CCrc16TableInit() { Crc16GenerateTable(); } } g_Crc16TableInit;
 
 
 
@@ -109,7 +109,7 @@ static UString ParseDString(const Byte *data, unsigned size)
       }
     }
     else
-      return L"[unknow]";
+      return UString("[unknow]");
     *p = 0;
     res.ReleaseBuf_SetLen((unsigned)(p - (const wchar_t *)res));
   }
@@ -179,12 +179,12 @@ HRESULT CTag::Parse(const Byte *buf, size_t size)
   Id = Get16(buf);
   Version = Get16(buf + 2);
   // SerialNumber = Get16(buf + 6);
-  UInt16 crc = Get16(buf + 8);
-  UInt16 crcLen = Get16(buf + 10);
+  UInt32 crc = Get16(buf + 8);
+  UInt32 crcLen = Get16(buf + 10);
   // TagLocation = Get32(buf + 12);
 
-  if (size >= 16 + (size_t)crcLen)
-    if (crc == Crc16Calc(buf + 16, crcLen))
+  if (size >= 16 + crcLen)
+    if (crc == Crc16Calc(buf + 16, (size_t)crcLen))
       return S_OK;
   return S_FALSE;
 }
@@ -389,7 +389,10 @@ HRESULT CInArchive::ReadFileItem(int volIndex, int fsIndex, const CLongAllocDesc
     return S_FALSE;
   CFile &file = Files.Back();
   const CLogVol &vol = LogVols[volIndex];
-  CPartition &partition = Partitions[vol.PartitionMaps[lad.Location.PartitionRef].PartitionIndex];
+  unsigned partitionRef = lad.Location.PartitionRef;
+  if (partitionRef >= vol.PartitionMaps.Size())
+    return S_FALSE;
+  CPartition &partition = Partitions[vol.PartitionMaps[partitionRef].PartitionIndex];
 
   UInt32 key = lad.Location.Pos;
   UInt32 value;
@@ -425,7 +428,7 @@ HRESULT CInArchive::ReadItem(int volIndex, int fsIndex, const CLongAllocDesc &la
   if (lad.GetLen() != vol.BlockSize)
     return S_FALSE;
 
-  size_t size = lad.GetLen();
+  const size_t size = lad.GetLen();
   CByteBuffer buf(size);
   RINOK(Read(volIndex, lad, buf));
 
@@ -515,20 +518,20 @@ HRESULT CInArchive::ReadItem(int volIndex, int fsIndex, const CLongAllocDesc &la
   {
     if (!item.CheckChunkSizes() || !CheckItemExtents(volIndex, item))
       return S_FALSE;
-    CByteBuffer buf;
-    RINOK(ReadFromFile(volIndex, item, buf));
+    CByteBuffer buf2;
+    RINOK(ReadFromFile(volIndex, item, buf2));
     item.Size = 0;
     item.Extents.ClearAndFree();
     item.InlineData.Free();
 
-    const Byte *p = buf;
-    size = buf.Size();
+    const Byte *p2 = buf2;
+    const size_t size2 = buf2.Size();
     size_t processedTotal = 0;
-    for (; processedTotal < size;)
+    for (; processedTotal < size2;)
     {
       size_t processedCur;
       CFileId fileId;
-      RINOK(fileId.Parse(p + processedTotal, size - processedTotal, processedCur));
+      RINOK(fileId.Parse(p2 + processedTotal, size2 - processedTotal, processedCur));
       if (!fileId.IsItLinkParent())
       {
         CFile file;
@@ -596,8 +599,8 @@ API_FUNC_IsArc IsArc_Udf(const Byte *p, size_t size)
   {
     if (SecLogSize < 8)
       return res;
-    UInt32 offset = (UInt32)256 << SecLogSize;
-    size_t bufSize = (UInt32)1 << SecLogSize;
+    const UInt32 offset = (UInt32)256 << SecLogSize;
+    const UInt32 bufSize = (UInt32)1 << SecLogSize;
     if (offset + bufSize > size)
       res = k_IsArc_Res_NEED_MORE;
     else
@@ -657,7 +660,7 @@ HRESULT CInArchive::Open2()
     if (offset >= fileSize)
       continue;
     RINOK(_stream->Seek(offset, STREAM_SEEK_SET, NULL));
-    size_t bufSize = (UInt32)1 << SecLogSize;
+    const size_t bufSize = (size_t)1 << SecLogSize;
     size_t readSize = bufSize;
     RINOK(ReadStream(_stream, buf, &readSize));
     if (readSize == bufSize)
@@ -683,8 +686,7 @@ HRESULT CInArchive::Open2()
 
   for (UInt32 location = 0; ; location++)
   {
-    size_t bufSize = (UInt32)1 << SecLogSize;
-    size_t pos = 0;
+    const size_t bufSize = (size_t)1 << SecLogSize;
     if (((UInt64)(location + 1) << SecLogSize) > extentVDS.Len)
       return S_FALSE;
 
@@ -697,7 +699,10 @@ HRESULT CInArchive::Open2()
 
 
     CTag tag;
-    RINOK(tag.Parse(buf + pos, bufSize - pos));
+    {
+      const size_t pos = 0;
+      RINOK(tag.Parse(buf + pos, bufSize - pos));
+    }
     if (tag.Id == DESC_TYPE_Terminating)
       break;
     
@@ -859,9 +864,9 @@ HRESULT CInArchive::Open2()
     {
       if (nextExtent.GetLen() < 512)
         return S_FALSE;
-      CByteBuffer buf(nextExtent.GetLen());
-      RINOK(Read(volIndex, nextExtent, buf));
-      const Byte *p = buf;
+      CByteBuffer buf2(nextExtent.GetLen());
+      RINOK(Read(volIndex, nextExtent, buf2));
+      const Byte *p = buf2;
       size_t size = nextExtent.GetLen();
 
       CTag tag;
@@ -1072,14 +1077,7 @@ static UString GetSpecName(const UString &name)
   UString name2 = name;
   name2.Trim();
   if (name2.IsEmpty())
-  {
-    /*
-    wchar_t s[32];
-    ConvertUInt64ToString(id, s);
-    return L"[" + (UString)s + L"]";
-    */
-    return L"[]";
-  }
+    return UString("[]");
   return name;
 }
 
@@ -1111,22 +1109,19 @@ UString CInArchive::GetItemPath(int volIndex, int fsIndex, int refIndex,
 
   if (showFsName)
   {
-    wchar_t s[32];
-    ConvertUInt32ToString(fsIndex, s);
-    UString newName = L"File Set ";
-    newName += s;
+    UString newName ("File Set ");
+    newName.Add_UInt32(fsIndex);
     UpdateWithName(name, newName);
   }
 
   if (showVolName)
   {
-    wchar_t s[32];
-    ConvertUInt32ToString(volIndex, s);
-    UString newName = s;
+    UString newName;
+    newName.Add_UInt32(volIndex);
     UString newName2 = vol.GetName();
     if (newName2.IsEmpty())
-      newName2 = L"Volume";
-    newName += L'-';
+      newName2 = "Volume";
+    newName += '-';
     newName += newName2;
     UpdateWithName(name, newName);
   }

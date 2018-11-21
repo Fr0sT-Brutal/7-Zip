@@ -30,7 +30,8 @@ int CompareFileNames_ForFolderList(const wchar_t *s1, const wchar_t *s2)
 CPlugin::CPlugin(const FString &fileName, CAgent *agent, UString archiveTypeName):
     _agent(agent),
     m_FileName(fileName),
-    _archiveTypeName(archiveTypeName)
+    _archiveTypeName(archiveTypeName),
+    PasswordIsDefined(false)
 {
   m_ArchiveHandler = agent;
   if (!m_FileInfo.Find(m_FileName))
@@ -82,7 +83,7 @@ void CPlugin::ReadPluginPanelItem(PluginPanelItem &panelItem, UInt32 itemIndex)
   if (prop.vt != VT_BSTR)
     throw 272340;
 
-  AString oemString = UnicodeStringToMultiByte(prop.bstrVal, CP_OEMCP);
+  AString oemString (UnicodeStringToMultiByte(prop.bstrVal, CP_OEMCP));
   if (oemString == "..")
     oemString = kDotsReplaceString;
 
@@ -193,7 +194,7 @@ void CPlugin::EnterToDirectory(const UString &dirName)
   CMyComPtr<IFolderFolder> newFolder;
   UString s = dirName;
   if (dirName == kDotsReplaceStringU)
-    s = L"..";
+    s = "..";
   _folder->BindToFolder(s, &newFolder);
   if (!newFolder)
     if (dirName.IsEmpty())
@@ -281,7 +282,7 @@ void CPlugin::SetCurrentDirVar()
   }
 }
 
-static const char *kPluginFormatName = "7-ZIP";
+static const char * const kPluginFormatName = "7-ZIP";
 
 
 static int FindPropNameID(PROPID propID)
@@ -371,17 +372,17 @@ static AString GetNameOfProp(PROPID propID, const wchar_t *name)
 {
   int farID = FindPropNameID(propID);
   if (farID >= 0)
-    return g_StartupInfo.GetMsgString(farID);
+    return (AString)g_StartupInfo.GetMsgString(farID);
   if (name)
-    return UnicodeStringToMultiByte((const wchar_t *)name, CP_OEMCP);
+    return UnicodeStringToMultiByte(name, CP_OEMCP);
   char s[16];
   ConvertUInt32ToString(propID, s);
-  return s;
+  return (AString)s;
 }
 
 static AString GetNameOfProp2(PROPID propID, const wchar_t *name)
 {
-  AString s = GetNameOfProp(propID, name);
+  AString s (GetNameOfProp(propID, name));
   if (s.Len() > (kInfoPanelLineSize - 1))
     s.DeleteFrom(kInfoPanelLineSize - 1);
   return s;
@@ -403,14 +404,14 @@ static AString ConvertSizeToString(UInt64 value)
   }
   while (i > 0)
     s[--pos] = s[--i];
-  return s + pos;
+  return (AString)(s + pos);
 }
 
 static AString PropToString(const NCOM::CPropVariant &prop, PROPID propID)
 {
   if (prop.vt == VT_BSTR)
   {
-    AString s = UnicodeStringToMultiByte(prop.bstrVal, CP_OEMCP);
+    AString s (UnicodeStringToMultiByte(prop.bstrVal, CP_OEMCP));
     s.Replace((char)0xA, ' ');
     s.Replace((char)0xD, ' ');
     return s;
@@ -419,7 +420,7 @@ static AString PropToString(const NCOM::CPropVariant &prop, PROPID propID)
   {
     int messageID = VARIANT_BOOLToBool(prop.boolVal) ?
       NMessageID::kYes : NMessageID::kNo;
-    return g_StartupInfo.GetMsgString(messageID);
+    return (AString)g_StartupInfo.GetMsgString(messageID);
   }
   if (prop.vt != VT_EMPTY)
   {
@@ -441,8 +442,8 @@ static AString PropToString(const NCOM::CPropVariant &prop, PROPID propID)
     }
     {
       char sz[64];
-      ConvertPropertyToShortString(sz, prop, propID);
-      return sz;
+      ConvertPropertyToShortString2(sz, prop, propID);
+      return (AString)sz;
     }
   }
   return AString();
@@ -450,7 +451,7 @@ static AString PropToString(const NCOM::CPropVariant &prop, PROPID propID)
 
 static AString PropToString2(const NCOM::CPropVariant &prop, PROPID propID)
 {
-  AString s = PropToString(prop, propID);
+  AString s (PropToString(prop, propID));
   if (s.Len() > (kInfoPanelLineSize - 1))
     s.DeleteFrom(kInfoPanelLineSize - 1);
   return s;
@@ -461,7 +462,7 @@ static void AddPropertyString(InfoPanelLine *lines, int &numItems, PROPID propID
 {
   if (prop.vt != VT_EMPTY)
   {
-    AString val = PropToString2(prop, propID);
+    AString val (PropToString2(prop, propID));
     if (!val.IsEmpty())
     {
       InfoPanelLine &item = lines[numItems++];
@@ -496,6 +497,7 @@ void CPlugin::GetOpenPluginInfo(struct OpenPluginInfo *info)
 
   info->Format = kPluginFormatName;
 
+  {
   UString name;
   {
     FString dirPrefix, fileName;
@@ -503,9 +505,9 @@ void CPlugin::GetOpenPluginInfo(struct OpenPluginInfo *info)
     name = fs2us(fileName);
   }
 
-  m_PannelTitle = L' ';
+  m_PannelTitle = ' ';
   m_PannelTitle += _archiveTypeName;
-  m_PannelTitle += L':';
+  m_PannelTitle += ':';
   m_PannelTitle += name;
   m_PannelTitle.Add_Space();
   if (!m_CurrentDir.IsEmpty())
@@ -516,6 +518,8 @@ void CPlugin::GetOpenPluginInfo(struct OpenPluginInfo *info)
  
   COPY_STR_LIMITED(m_PannelTitleBuffer, UnicodeStringToMultiByte(m_PannelTitle, CP_OEMCP));
   info->PanelTitle = m_PannelTitleBuffer;
+
+  }
 
   memset(m_InfoLines, 0, sizeof(m_InfoLines));
   m_InfoLines[0].Text[0] = 0;
@@ -716,11 +720,14 @@ HRESULT CPlugin::ShowAttributesWindow()
 
   int size = 2;
   CRecordVector<CInitDialogItem> initDialogItems;
-  
+
   int xSize = 70;
-  CInitDialogItem idi =
-  { DI_DOUBLEBOX, 3, 1, xSize - 4, size - 2, false, false, 0, false, NMessageID::kProperties, NULL, NULL };
-  initDialogItems.Add(idi);
+  {
+    const CInitDialogItem idi =
+      { DI_DOUBLEBOX, 3, 1, xSize - 4, size - 2, false, false, 0, false, NMessageID::kProperties, NULL, NULL };
+    initDialogItems.Add(idi);
+  }
+
   AStringVector values;
 
   const int kStartY = 3;
@@ -731,20 +738,21 @@ HRESULT CPlugin::ShowAttributesWindow()
 
     int startY = kStartY + values.Size();
 
-    CInitDialogItem idi =
-      { DI_TEXT, 5, startY, 0, 0, false, false, 0, false, 0, NULL, NULL };
-    idi.DataMessageId = FindPropNameID(property.ID);
-    if (idi.DataMessageId < 0)
-      idi.DataString = property.Name;
-    initDialogItems.Add(idi);
+    {
+      CInitDialogItem idi =
+        { DI_TEXT, 5, startY, 0, 0, false, false, 0, false, 0, NULL, NULL };
+      idi.DataMessageId = FindPropNameID(property.ID);
+      if (idi.DataMessageId < 0)
+        idi.DataString = property.Name;
+      initDialogItems.Add(idi);
+    }
     
     NCOM::CPropVariant prop;
     RINOK(_folder->GetProperty(itemIndex, property.ID, &prop));
-    AString s = PropToString(prop, property.ID);
-    values.Add(s);
+    values.Add(PropToString(prop, property.ID));
     
     {
-      CInitDialogItem idi =
+      const CInitDialogItem idi =
         { DI_TEXT, 30, startY, 0, 0, false, false, 0, false, -1, NULL, NULL };
       initDialogItems.Add(idi);
     }
@@ -774,7 +782,7 @@ HRESULT CPlugin::ShowAttributesWindow()
       properties2.Add(prop);
     }
 
-    for (unsigned i = 0; i < properties2.Size(); i++)
+    for (i = 0; i < properties2.Size(); i++)
     {
       const CArchiveItemProperty &property = properties2[i];
       CMyComBSTR name;
@@ -795,16 +803,14 @@ HRESULT CPlugin::ShowAttributesWindow()
           const UInt32 kMaxDataSize = 64;
           if (dataSize > kMaxDataSize)
           {
-            char temp[64];
             s += "data:";
-            ConvertUInt32ToString(dataSize, temp);
-            s += temp;
+            s.Add_UInt32(dataSize);
           }
           else
           {
-            for (UInt32 i = 0; i < dataSize; i++)
+            for (UInt32 k = 0; k < dataSize; k++)
             {
-              Byte b = ((const Byte *)data)[i];
+              Byte b = ((const Byte *)data)[k];
               s += GetHex((Byte)((b >> 4) & 0xF));
               s += GetHex((Byte)(b & 0xF));
             }
@@ -812,17 +818,20 @@ HRESULT CPlugin::ShowAttributesWindow()
         }
 
         int startY = kStartY + values.Size();
-        CInitDialogItem idi =
-          { DI_TEXT, 5, startY, 0, 0, false, false, 0, false, 0, NULL, NULL };
-        idi.DataMessageId = FindPropNameID(property.ID);
-        if (idi.DataMessageId < 0)
-          idi.DataString = property.Name;
-        initDialogItems.Add(idi);
+
+        {
+          CInitDialogItem idi =
+            { DI_TEXT, 5, startY, 0, 0, false, false, 0, false, 0, NULL, NULL };
+          idi.DataMessageId = FindPropNameID(property.ID);
+          if (idi.DataMessageId < 0)
+            idi.DataString = property.Name;
+          initDialogItems.Add(idi);
+        }
         
         values.Add(s);
         
         {
-          CInitDialogItem idi =
+          const CInitDialogItem idi =
             { DI_TEXT, 30, startY, 0, 0, false, false, 0, false, -1, NULL, NULL };
           initDialogItems.Add(idi);
         }

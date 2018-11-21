@@ -17,6 +17,7 @@
 #include "../../../Windows/FileFind.h"
 #include "../../../Windows/FileName.h"
 #include "../../../Windows/Handle.h"
+#include "../../../Windows/PropVariantConv.h"
 #include "../../../Windows/Synchronization.h"
 
 #include "../../../Windows/Control/ComboBox.h"
@@ -57,7 +58,7 @@ const int kParentIndex = -1;
 struct CPanelCallback
 {
   virtual void OnTab() = 0;
-  virtual void SetFocusToPath(int index) = 0;
+  virtual void SetFocusToPath(unsigned index) = 0;
   virtual void OnCopy(bool move, bool copyToSame) = 0;
   virtual void OnSetSameFolder() = 0;
   virtual void OnSetSubFolder() = 0;
@@ -219,10 +220,12 @@ public:
 struct CSelectedState
 {
   int FocusedItem;
-  UString FocusedName;
   bool SelectFocused;
+  bool FocusedName_Defined;
+  UString FocusedName;
   UStringVector SelectedNames;
-  CSelectedState(): FocusedItem(-1), SelectFocused(false) {}
+  
+  CSelectedState(): FocusedItem(-1), FocusedName_Defined(false), SelectFocused(true) {}
 };
 
 #ifdef UNDER_CE
@@ -324,9 +327,7 @@ private:
   void AddColumn(const CPropColumn &prop);
 
   void SetFocusedSelectedItem(int index, bool select);
-  HRESULT RefreshListCtrl(const UString &focusedName, int focusedPos, bool selectFocused,
-      const UStringVector &selectedNames);
-
+  
   void OnShiftSelectMessage();
   void OnArrowWithShift();
 
@@ -360,6 +361,7 @@ public:
   // CMyComboBox _headerComboBox;
   CMyComboBoxEdit _comboBoxEdit;
   CMyListView _listView;
+  bool _thereAre_ListView_Items;
   NWindows::NControl::CStatusBar _statusBar;
   bool _lastFocusedIsList;
   // NWindows::NControl::CStatusBar _statusBar2;
@@ -371,11 +373,35 @@ public:
   // CUIntVector _realIndices;
   bool _enableItemChangeNotify;
   bool _mySelectMode;
+
+  int _timestampLevel;
+
+
+  void RedrawListItems()
+  {
+    _listView.RedrawAllItems();
+  }
+
+
   CBoolVector _selectedStatusVector;
 
   CSelectedState _selectedState;
   bool _thereAreDeletedItems;
   bool _markDeletedItems;
+
+  bool PanelCreated;
+
+  void DeleteListItems()
+  {
+    if (_thereAre_ListView_Items)
+    {
+      bool b = _enableItemChangeNotify;
+      _enableItemChangeNotify = false;
+      _listView.DeleteAllItems();
+      _thereAre_ListView_Items = false;
+      _enableItemChangeNotify = b;
+    }
+  }
 
   HWND GetParent();
 
@@ -436,7 +462,7 @@ public:
   void GetSelectedNames(UStringVector &selectedNames);
   void SaveSelectedState(CSelectedState &s);
   HRESULT RefreshListCtrl(const CSelectedState &s);
-  HRESULT RefreshListCtrlSaveFocused();
+  HRESULT RefreshListCtrl_SaveFocused();
 
   bool GetItem_BoolProp(UInt32 itemIndex, PROPID propID) const;
   bool IsItem_Deleted(int itemIndex) const;
@@ -450,6 +476,7 @@ public:
   UString GetItemRelPath(int itemIndex) const;
   UString GetItemRelPath2(int itemIndex) const;
   UString GetItemFullPath(int itemIndex) const;
+  UInt64 GetItem_UInt64Prop(int itemIndex, PROPID propID) const;
   UInt64 GetItemSize(int itemIndex) const;
 
   ////////////////////////
@@ -460,8 +487,8 @@ public:
   HRESULT BindToPathAndRefresh(const UString &path);
   void OpenDrivesFolder();
   
-  void SetBookmark(int index);
-  void OpenBookmark(int index);
+  void SetBookmark(unsigned index);
+  void OpenBookmark(unsigned index);
   
   void LoadFullPath();
   void LoadFullPathAndShow();
@@ -471,13 +498,16 @@ public:
   void CloseOpenFolders();
   void OpenRootFolder();
 
+  UString GetParentDirPrefix() const;
 
   HRESULT Create(HWND mainWindow, HWND parentWindow,
       UINT id,
       const UString &currentFolderPrefix,
       const UString &arcFormat,
       CPanelCallback *panelCallback,
-      CAppState *appState, bool &archiveIsOpened, bool &encrypted);
+      CAppState *appState,
+      bool needOpenArc,
+      bool &archiveIsOpened, bool &encrypted);
   void SetFocusToList();
   void SetFocusToLastRememberedItem();
 
@@ -496,6 +526,8 @@ public:
       _flatMode(false),
       _flatModeForDisk(false),
       _flatModeForArc(false),
+      PanelCreated(false),
+      _thereAre_ListView_Items(false),
 
       // _showNtfsStrems_Mode(false),
       // _showNtfsStrems_ModeForDisk(false),
@@ -506,7 +538,9 @@ public:
       _thereAreDeletedItems(false),
       _markDeletedItems(true),
       _enableItemChangeNotify(true),
-      _dontShowMode(false)
+      _dontShowMode(false),
+
+      _timestampLevel(kTimestampPrintLevel_MIN)
   {}
 
   void SetExtendedStyle()
@@ -710,20 +744,20 @@ public:
 
   HRESULT RefreshListCtrl();
 
-  void MessageBoxInfo(LPCWSTR message, LPCWSTR caption);
-  void MessageBox(LPCWSTR message);
-  void MessageBoxWarning(LPCWSTR message);
-  void MessageBox(LPCWSTR message, LPCWSTR caption);
-  void MessageBoxMyError(LPCWSTR message);
-  void MessageBoxError(HRESULT errorCode, LPCWSTR caption);
-  void MessageBoxError(HRESULT errorCode);
-  void MessageBoxError2Lines(LPCWSTR message, HRESULT errorCode);
-  void MessageBoxLastError(LPCWSTR caption);
-  void MessageBoxLastError();
-
+  
+  // void MessageBox_Info(LPCWSTR message, LPCWSTR caption) const;
+  // void MessageBox_Warning(LPCWSTR message) const;
+  void MessageBox_Error_Caption(LPCWSTR message, LPCWSTR caption) const;
+  void MessageBox_Error(LPCWSTR message) const;
+  void MessageBox_Error_HRESULT_Caption(HRESULT errorCode, LPCWSTR caption) const;
+  void MessageBox_Error_HRESULT(HRESULT errorCode) const;
+  void MessageBox_Error_2Lines_Message_HRESULT(LPCWSTR message, HRESULT errorCode) const;
+  void MessageBox_LastError(LPCWSTR caption) const;
+  void MessageBox_LastError() const;
+  void MessageBox_Error_LangID(UINT resourceID) const;
+  void MessageBox_Error_UnsupportOperation() const;
   // void MessageBoxErrorForUpdate(HRESULT errorCode, UINT resourceID);
 
-  void MessageBoxErrorLang(UINT resourceID);
 
   void OpenAltStreams();
 

@@ -343,16 +343,17 @@ HRESULT CHandler::ParseLongNames(IInStream *stream)
   if (item.Size > ((UInt32)1 << 30))
     return S_FALSE;
   RINOK(stream->Seek(item.GetDataPos(), STREAM_SEEK_SET, NULL));
-  size_t size = (size_t)item.Size;
+  const size_t size = (size_t)item.Size;
 
   CByteArr p(size);
   RINOK(ReadStream_FALSE(stream, p, size));
+  
   for (i = 0; i < _items.Size(); i++)
   {
-    CItem &item = _items[i];
-    if (item.Name[0] != '/')
+    CItem &item2 = _items[i];
+    if (item2.Name[0] != '/')
       continue;
-    const char *ptr = item.Name.Ptr(1);
+    const char *ptr = item2.Name.Ptr(1);
     const char *end;
     UInt32 pos = ConvertStringToUInt32(ptr, &end);
     if (*end != 0 || end == ptr)
@@ -369,8 +370,9 @@ HRESULT CHandler::ParseLongNames(IInStream *stream)
         break;
       pos++;
     }
-    item.Name.SetFrom((const char *)(p + start), pos - start);
+    item2.Name.SetFrom((const char *)(p + start), pos - start);
   }
+  
   _longNames_FileIndex = fileIndex;
   return S_OK;
 }
@@ -686,7 +688,7 @@ STDMETHODIMP CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value)
     case kpidShortComment:
     case kpidSubType:
     {
-      AString s = k_TypeExtionsions[(unsigned)_type];
+      AString s (k_TypeExtionsions[(unsigned)_type]);
       if (_subType == kSubType_BSD)
         s += ":BSD";
       prop = s;
@@ -718,7 +720,7 @@ STDMETHODIMP CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
       if (item.TextFileIndex >= 0)
         prop = (item.TextFileIndex == 0) ? "1.txt" : "2.txt";
       else
-        prop = (const wchar_t *)NItemName::GetOSName2(MultiByteToUnicodeString(item.Name, CP_OEMCP));
+        prop = (const wchar_t *)NItemName::GetOsPath_Remove_TailSlash(MultiByteToUnicodeString(item.Name, CP_OEMCP));
       break;
     case kpidSize:
     case kpidPackSize:

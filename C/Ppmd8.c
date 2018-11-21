@@ -1,5 +1,5 @@
 /* Ppmd8.c -- PPMdI codec
-2015-09-28 : Igor Pavlov : Public domain
+2017-04-03 : Igor Pavlov : Public domain
 This code is based on PPMd var.I (2002): Dmitry Shkarin : Public domain */
 
 #include "Precomp.h"
@@ -15,7 +15,7 @@ static const UInt16 kInitBinEsc[] = { 0x3CDD, 0x1F3F, 0x59BF, 0x48F3, 0x64A1, 0x
 #define UNIT_SIZE 12
 
 #define U2B(nu) ((UInt32)(nu) * UNIT_SIZE)
-#define U2I(nu) (p->Units2Indx[(nu) - 1])
+#define U2I(nu) (p->Units2Indx[(size_t)(nu) - 1])
 #define I2U(indx) (p->Indx2Units[indx])
 
 #ifdef PPMD_32BIT
@@ -86,16 +86,16 @@ void Ppmd8_Construct(CPpmd8 *p)
   }
 }
 
-void Ppmd8_Free(CPpmd8 *p, ISzAlloc *alloc)
+void Ppmd8_Free(CPpmd8 *p, ISzAllocPtr alloc)
 {
-  alloc->Free(alloc, p->Base);
+  ISzAlloc_Free(alloc, p->Base);
   p->Size = 0;
   p->Base = 0;
 }
 
-Bool Ppmd8_Alloc(CPpmd8 *p, UInt32 size, ISzAlloc *alloc)
+Bool Ppmd8_Alloc(CPpmd8 *p, UInt32 size, ISzAllocPtr alloc)
 {
-  if (p->Base == 0 || p->Size != size)
+  if (!p->Base || p->Size != size)
   {
     Ppmd8_Free(p, alloc);
     p->AlignOffset =
@@ -104,7 +104,7 @@ Bool Ppmd8_Alloc(CPpmd8 *p, UInt32 size, ISzAlloc *alloc)
       #else
         4 - (size & 3);
       #endif
-    if ((p->Base = (Byte *)alloc->Alloc(alloc, p->AlignOffset + size)) == 0)
+    if ((p->Base = (Byte *)ISzAlloc_Alloc(alloc, p->AlignOffset + size)) == 0)
       return False;
     p->Size = size;
   }
@@ -240,8 +240,8 @@ static void *AllocUnits(CPpmd8 *p, unsigned indx)
 }
 
 #define MyMem12Cpy(dest, src, num) \
-  { UInt32 *d = (UInt32 *)dest; const UInt32 *s = (const UInt32 *)src; UInt32 n = num; \
-    do { d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; s += 3; d += 3; } while (--n); }
+  { UInt32 *d = (UInt32 *)dest; const UInt32 *z = (const UInt32 *)src; UInt32 n = num; \
+    do { d[0] = z[0]; d[1] = z[1]; d[2] = z[2]; z += 3; d += 3; } while (--n); }
 
 static void *ShrinkUnits(CPpmd8 *p, void *oldPtr, unsigned oldNU, unsigned newNU)
 {
@@ -386,7 +386,7 @@ static void RestartModel(CPpmd8 *p)
 
   for (i = m = 0; m < 24; m++)
   {
-    while (p->NS2Indx[i + 3] == m + 3)
+    while (p->NS2Indx[(size_t)i + 3] == m + 3)
       i++;
     for (k = 0; k < 32; k++)
     {
@@ -772,7 +772,7 @@ static CTX_PTR ReduceOrder(CPpmd8 *p, CPpmd_State *s1, CTX_PTR c)
   if (SUCCESSOR(s) <= upBranch)
   {
     CTX_PTR successor;
-    CPpmd_State *s1 = p->FoundState;
+    CPpmd_State *s2 = p->FoundState;
     p->FoundState = s;
 
     successor = CreateSuccessors(p, False, NULL, c);
@@ -780,7 +780,7 @@ static CTX_PTR ReduceOrder(CPpmd8 *p, CPpmd_State *s1, CTX_PTR c)
       SetSuccessor(s, 0);
     else
       SetSuccessor(s, REF(successor));
-    p->FoundState = s1;
+    p->FoundState = s2;
   }
   
   if (p->OrderFall == 1 && c1 == p->MaxContext)
@@ -905,7 +905,7 @@ static void UpdateModel(CPpmd8 *p)
         /* Expand for one UNIT */
         unsigned oldNU = (ns1 + 1) >> 1;
         unsigned i = U2I(oldNU);
-        if (i != U2I(oldNU + 1))
+        if (i != U2I((size_t)oldNU + 1))
         {
           void *ptr = AllocUnits(p, i + 1);
           void *oldPtr;
@@ -924,19 +924,19 @@ static void UpdateModel(CPpmd8 *p)
     }
     else
     {
-      CPpmd_State *s = (CPpmd_State*)AllocUnits(p, 0);
-      if (!s)
+      CPpmd_State *s2 = (CPpmd_State*)AllocUnits(p, 0);
+      if (!s2)
       {
         RESTORE_MODEL(c, CTX(fSuccessor));
         return;
       }
-      *s = *ONE_STATE(c);
-      c->Stats = REF(s);
-      if (s->Freq < MAX_FREQ / 4 - 1)
-        s->Freq <<= 1;
+      *s2 = *ONE_STATE(c);
+      c->Stats = REF(s2);
+      if (s2->Freq < MAX_FREQ / 4 - 1)
+        s2->Freq <<= 1;
       else
-        s->Freq = MAX_FREQ - 4;
-      c->SummFreq = (UInt16)(s->Freq + p->InitEsc + (ns > 2));
+        s2->Freq = MAX_FREQ - 4;
+      c->SummFreq = (UInt16)(s2->Freq + p->InitEsc + (ns > 2));
     }
     cf = 2 * fFreq * (c->SummFreq + 6);
     sf = (UInt32)s0 + c->SummFreq;
@@ -951,10 +951,10 @@ static void UpdateModel(CPpmd8 *p)
       c->SummFreq = (UInt16)(c->SummFreq + cf);
     }
     {
-      CPpmd_State *s = STATS(c) + ns1 + 1;
-      SetSuccessor(s, successor);
-      s->Symbol = fSymbol;
-      s->Freq = (Byte)cf;
+      CPpmd_State *s2 = STATS(c) + ns1 + 1;
+      SetSuccessor(s2, successor);
+      s2->Symbol = fSymbol;
+      s2->Freq = (Byte)cf;
       c->Flags |= flag;
       c->NumStats = (Byte)(ns1 + 1);
     }
@@ -1038,9 +1038,9 @@ CPpmd_See *Ppmd8_MakeEscFreq(CPpmd8 *p, unsigned numMasked1, UInt32 *escFreq)
   CPpmd_See *see;
   if (p->MinContext->NumStats != 0xFF)
   {
-    see = p->See[p->NS2Indx[p->MinContext->NumStats + 2] - 3] +
+    see = p->See[(size_t)(unsigned)p->NS2Indx[(size_t)(unsigned)p->MinContext->NumStats + 2] - 3] +
         (p->MinContext->SummFreq > 11 * ((unsigned)p->MinContext->NumStats + 1)) +
-        2 * (2 * (unsigned)p->MinContext->NumStats <
+        2 * (unsigned)(2 * (unsigned)p->MinContext->NumStats <
         ((unsigned)SUFFIX(p->MinContext)->NumStats + numMasked1)) +
         p->MinContext->Flags;
     {

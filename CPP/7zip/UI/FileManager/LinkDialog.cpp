@@ -55,7 +55,8 @@ static bool GetSymLink(CFSTR path, CReparseAttr &attr)
   if (!file.DeviceIoControlOut(my_FSCTL_GET_REPARSE_POINT, buf, kBufSize, &returnedSize))
     return false;
   
-  if (!attr.Parse(buf, returnedSize))
+  DWORD errorCode = 0;
+  if (!attr.Parse(buf, returnedSize, errorCode))
     return false;
 
   CByteBuffer data2;
@@ -108,11 +109,11 @@ bool CLinkDialog::OnInit()
         UString s = attr.PrintName;
         if (!attr.IsOkNamePair())
         {
-          s += L" : ";
+          s += " : ";
           s += attr.SubsName;
         }
         if (!res)
-          s = L"ERROR: " + s;
+          s.Insert(0, L"ERROR: ");
         
         SetItemText(IDT_LINK_PATH_TO_CUR, s);
         
@@ -214,7 +215,7 @@ void CLinkDialog::OnButton_SetPath(bool to)
     _pathToCombo :
     _pathFromCombo;
   combo.GetText(currentPath);
-  // UString title = L"Specify a location for output folder";
+  // UString title = "Specify a location for output folder";
   UString title = LangString(IDS_SET_FOLDER);
 
   UString resultPath;
@@ -291,7 +292,8 @@ void CLinkDialog::OnButton_Link()
     }
     
     CReparseAttr attr;
-    if (!attr.Parse(data, data.Size()))
+    DWORD errorCode = 0;
+    if (!attr.Parse(data, data.Size(), errorCode))
     {
       ShowError(L"Internal conversion error");
       return;
@@ -310,11 +312,11 @@ void CLinkDialog::OnButton_Link()
 
 void CApp::Link()
 {
-  int srcPanelIndex = GetFocusedPanelIndex();
+  unsigned srcPanelIndex = GetFocusedPanelIndex();
   CPanel &srcPanel = Panels[srcPanelIndex];
   if (!srcPanel.IsFSFolder())
   {
-    srcPanel.MessageBoxErrorLang(IDS_OPERATION_IS_NOT_SUPPORTED);
+    srcPanel.MessageBox_Error_UnsupportOperation();
     return;
   }
   CRecordVector<UInt32> indices;
@@ -323,7 +325,7 @@ void CApp::Link()
     return;
   if (indices.Size() != 1)
   {
-    srcPanel.MessageBoxErrorLang(IDS_SELECT_ONE_FILE);
+    srcPanel.MessageBox_Error_LangID(IDS_SELECT_ONE_FILE);
     return;
   }
   int index = indices[0];
@@ -333,7 +335,7 @@ void CApp::Link()
   const UString srcPath = fsPrefix + srcPanel.GetItemPrefix(index);
   UString path = srcPath;
   {
-    int destPanelIndex = (NumPanels <= 1) ? srcPanelIndex : (1 - srcPanelIndex);
+    unsigned destPanelIndex = (NumPanels <= 1) ? srcPanelIndex : (1 - srcPanelIndex);
     CPanel &destPanel = Panels[destPanelIndex];
     if (NumPanels > 1)
       if (destPanel.IsFSFolder())

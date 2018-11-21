@@ -401,9 +401,36 @@ struct CArchiveLink
   HRESULT Open2(COpenOptions &options, IOpenCallbackUI *callbackUI);
   HRESULT Open3(COpenOptions &options, IOpenCallbackUI *callbackUI);
 
+  HRESULT Open_Strict(COpenOptions &options, IOpenCallbackUI *callbackUI)
+  {
+    HRESULT result = Open3(options, callbackUI);
+    if (result == S_OK && NonOpen_ErrorInfo.ErrorFormatIndex >= 0)
+      result = S_FALSE;
+    return result;
+  }
+
   HRESULT ReOpen(COpenOptions &options);
 };
 
 bool ParseOpenTypes(CCodecs &codecs, const UString &s, CObjectVector<COpenType> &types);
+
+
+struct CDirPathSortPair
+{
+  unsigned Len;
+  unsigned Index;
+
+  void SetNumSlashes(const FChar *s);
+  
+  int Compare(const CDirPathSortPair &a) const
+  {
+    // We need sorting order where parent items will be after child items
+    if (Len < a.Len) return 1;
+    if (Len > a.Len) return -1;
+    if (Index < a.Index) return -1;
+    if (Index > a.Index) return 1;
+    return 0;
+  }
+};
 
 #endif

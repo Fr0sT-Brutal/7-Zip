@@ -87,6 +87,9 @@ struct CPartType
 static const CPartType kPartTypes[] =
 {
   // { 0x0, 0, "Unused" },
+
+  { 0x21686148, 0, "BIOS Boot" },
+
   { 0xC12A7328, 0, "EFI System" },
   { 0x024DEE41, 0, "MBR" },
       
@@ -98,10 +101,13 @@ static const CPartType kPartTypes[] =
   // { 0x37AFFC90, 0, "IBM GPFS" },
   // { 0xE75CAF8F, 0, "Windows Storage Spaces" },
 
-  { 0x83BD6B9D, 0, "FreeBSD Boot"  },
+  { 0x0FC63DAF, 0, "Linux Data" },
+  { 0x0657FD6D, 0, "Linux Swap" },
+
+  { 0x83BD6B9D, 0, "FreeBSD Boot" },
   { 0x516E7CB4, 0, "FreeBSD Data" },
   { 0x516E7CB5, 0, "FreeBSD Swap" },
-  { 0x516E7CB6, "ufs", "FreeBSD UFS"  },
+  { 0x516E7CB6, "ufs", "FreeBSD UFS" },
   { 0x516E7CB8, 0, "FreeBSD Vinum" },
   { 0x516E7CB8, "zfs", "FreeBSD ZFS" },
 
@@ -117,33 +123,11 @@ static int FindPartType(const Byte *guid)
   return -1;
 }
 
-static inline char GetHex(unsigned t) { return (char)(((t < 10) ? ('0' + t) : ('A' + (t - 10)))); }
 
-static void PrintHex(unsigned v, char *s)
+static void RawLeGuidToString_Upper(const Byte *g, char *s)
 {
-  s[0] = GetHex((v >> 4) & 0xF);
-  s[1] = GetHex(v & 0xF);
-}
-
-static void ConvertUInt16ToHex4Digits(UInt32 val, char *s) throw()
-{
-  PrintHex(val >> 8, s);
-  PrintHex(val & 0xFF, s + 2);
-}
-
-static void GuidToString(const Byte *g, char *s)
-{
-  ConvertUInt32ToHex8Digits(Get32(g   ),  s);  s += 8;  *s++ = '-';
-  ConvertUInt16ToHex4Digits(Get16(g + 4), s);  s += 4;  *s++ = '-';
-  ConvertUInt16ToHex4Digits(Get16(g + 6), s);  s += 4;  *s++ = '-';
-  for (unsigned i = 0; i < 8; i++)
-  {
-    if (i == 2)
-      *s++ = '-';
-    PrintHex(g[8 + i], s);
-    s += 2;
-  }
-  *s = 0;
+  RawLeGuidToString(g, s);
+  // MyStringUpper_Ascii(s);
 }
 
 
@@ -238,9 +222,31 @@ HRESULT CHandler::Open2(IInStream *stream)
     _items.Add(item);
   }
   
-  UInt64 end = (backupLba + 1) * kSectorSize;
-  if (_totalSize < end)
-    _totalSize = end;
+  {
+    const UInt64 end = (backupLba + 1) * kSectorSize;
+    if (_totalSize < end)
+      _totalSize = end;
+  }
+
+  {
+    UInt64 fileEnd;
+    RINOK(stream->Seek(0, STREAM_SEEK_END, &fileEnd));
+    
+    if (_totalSize < fileEnd)
+    {
+      const UInt64 rem = fileEnd - _totalSize;
+      const UInt64 kRemMax = 1 << 22;
+      if (rem <= kRemMax)
+      {
+        RINOK(stream->Seek(_totalSize, STREAM_SEEK_SET, NULL));
+        bool areThereNonZeros = false;
+        UInt64 numZeros = 0;
+        if (ReadZeroTail(stream, areThereNonZeros, numZeros, kRemMax) == S_OK)
+          if (!areThereNonZeros)
+            _totalSize += numZeros;
+      }
+    }
+  }
 
   return S_OK;
 }
@@ -300,7 +306,7 @@ STDMETHODIMP CHandler::GetArchiveProperty(PROPID propID, PROPVARIANT *value)
     case kpidId:
     {
       char s[48];
-      GuidToString(Guid, s);
+      RawLeGuidToString_Upper(Guid, s);
       prop = s;
       break;
     }
@@ -335,13 +341,17 @@ STDMETHODIMP CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
           break;
         s += c;
       }
+      if (s.IsEmpty())
+        s.Add_UInt32(index);
       {
+        s += '.';
+        const char *ext = NULL;
         int typeIndex = FindPartType(item.Type);
-        s += L'.';
-        const char *ext = "img";
-        if (typeIndex >= 0 && kPartTypes[(unsigned)typeIndex].Ext)
+        if (typeIndex >= 0)
           ext = kPartTypes[(unsigned)typeIndex].Ext;
-        s.AddAscii(ext);
+        if (!ext)
+          ext = "img";
+        s += ext;
       }
       prop = s;
       break;
@@ -360,7 +370,7 @@ STDMETHODIMP CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
         res = kPartTypes[(unsigned)typeIndex].Type;
       else
       {
-        GuidToString(item.Type, s);
+        RawLeGuidToString_Upper(item.Type, s);
         res = s;
       }
       prop = res;
@@ -370,7 +380,7 @@ STDMETHODIMP CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
     case kpidId:
     {
       char s[48];
-      GuidToString(item.Id, s);
+      RawLeGuidToString_Upper(item.Id, s);
       prop = s;
       break;
     }

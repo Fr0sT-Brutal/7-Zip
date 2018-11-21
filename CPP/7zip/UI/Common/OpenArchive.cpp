@@ -330,17 +330,17 @@ STDMETHODIMP CHandler::GetProperty(UInt32 index, PROPID propID, PROPVARIANT *val
   {
     case kpidPath:
     {
-      wchar_t sz[32];
+      char sz[32];
       ConvertUInt32ToString(index + 1, sz);
-      UString s = sz;
+      UString s(sz);
       if (!item.Name.IsEmpty())
       {
-        s += L'.';
+        s += '.';
         s += item.Name;
       }
       if (!item.Extension.IsEmpty())
       {
-        s += L'.';
+        s += '.';
         s += item.Extension;
       }
       prop = s; break;
@@ -497,7 +497,7 @@ static HRESULT Archive_GetArcProp_UInt(IInArchive *arc, PROPID propid, UInt64 &r
   switch (prop.vt)
   {
     case VT_UI4: result = prop.ulVal; defined = true; break;
-    case VT_I4: result = prop.lVal; defined = true; break;
+    case VT_I4: result = (Int64)prop.lVal; defined = true; break;
     case VT_UI8: result = (UInt64)prop.uhVal.QuadPart; defined = true; break;
     case VT_I8: result = (UInt64)prop.hVal.QuadPart; defined = true; break;
     case VT_EMPTY: break;
@@ -582,9 +582,9 @@ HRESULT CArc::GetItemPathToParent(UInt32 index, UInt32 parent, UStringVector &pa
     if (prevWasAltStream)
     {
       {
-        UString &s = parts[parts.Size() - 2];
-        s += L':';
-        s += parts.Back();
+        UString &s2 = parts[parts.Size() - 2];
+        s2 += ':';
+        s2 += parts.Back();
       }
       parts.DeleteBack();
     }
@@ -733,7 +733,7 @@ HRESULT CArc::GetDefaultItemPath(UInt32 index, UString &result) const
     RINOK(Archive->GetProperty(index, kpidExtension, &prop));
     if (prop.vt == VT_BSTR)
     {
-      result += L'.';
+      result += '.';
       result += prop.bstrVal;
     }
     else if (prop.vt != VT_EMPTY)
@@ -857,14 +857,14 @@ HRESULT CArc::GetItem(UInt32 index, CReadArcItem &item) const
 
   if (item.WriteToAltStreamIfColon || needFindAltStream)
   {
-    /* Good handler must support GetRawProps::GetParent for alt streams./
+    /* Good handler must support GetRawProps::GetParent for alt streams.
        So the following code currently is not used */
     int colon = FindAltStreamColon_in_Path(item.Path);
     if (colon >= 0)
     {
       item.MainPath.DeleteFrom(colon);
       item.AltStreamName = item.Path.Ptr(colon + 1);
-      item.MainIsDir = (colon == 0 || IsPathSepar(item.Path[colon - 1]));
+      item.MainIsDir = (colon == 0 || IsPathSepar(item.Path[(unsigned)colon - 1]));
       item.IsAltStream = true;
     }
   }
@@ -992,7 +992,7 @@ static void MakeCheckOrder(CCodecs *codecs,
     int index = orderIndices[i];
     if (index < 0)
       continue;
-    const CArcInfoEx &ai = codecs->Formats[index];
+    const CArcInfoEx &ai = codecs->Formats[(unsigned)index];
     if (ai.SignatureOffset != 0)
     {
       orderIndices2.Add(index);
@@ -1020,10 +1020,11 @@ static void MakeCheckOrder(CCodecs *codecs,
 
 #ifdef UNDER_CE
   static const unsigned kNumHashBytes = 1;
-  #define HASH_VAL(buf, pos) ((buf)[pos])
+  #define HASH_VAL(buf) ((buf)[0])
 #else
   static const unsigned kNumHashBytes = 2;
-  #define HASH_VAL(buf, pos) ((buf)[pos] | ((UInt32)(buf)[pos + 1] << 8))
+  // #define HASH_VAL(buf) ((buf)[0] | ((UInt32)(buf)[1] << 8))
+  #define HASH_VAL(buf) GetUi16(buf)
 #endif
 
 
@@ -1632,6 +1633,36 @@ HRESULT CArc::OpenStream2(const COpenOptions &op)
     #endif
     
     {
+      #ifndef _SFX
+      
+      bool isZip = false;
+      bool isRar = false;
+      
+      const wchar_t c = extension[0];
+      if (c == 'z' || c == 'Z' || c == 'r' || c == 'R')
+      {
+        bool isNumber = false;
+        for (unsigned k = 1;; k++)
+        {
+          const wchar_t d = extension[k];
+          if (d == 0)
+            break;
+          if (d < '0' || d > '9')
+          {
+            isNumber = false;
+            break;
+          }
+          isNumber = true;
+        }
+        if (isNumber)
+          if (c == 'z' || c == 'Z')
+            isZip = true;
+          else
+            isRar = true;
+      }
+      
+      #endif
+
       FOR_VECTOR (i, op.codecs->Formats)
       {
         const CArcInfoEx &ai = op.codecs->Formats[i];
@@ -1647,7 +1678,12 @@ HRESULT CArc::OpenStream2(const COpenOptions &op)
           isPrearcExt = true;
         #endif
 
-        if (ai.FindExtension(extension) >= 0)
+        if (ai.FindExtension(extension) >= 0
+            #ifndef _SFX
+            || isZip && StringsAreEqualNoCase_Ascii(ai.Name, "zip")
+            || isRar && StringsAreEqualNoCase_Ascii(ai.Name, "rar")
+            #endif
+            )
         {
           // PrintNumber("orderIndices.Insert", i);
           orderIndices.Insert(numFinded++, i);
@@ -1980,7 +2016,6 @@ HRESULT CArc::OpenStream2(const COpenOptions &op)
       const CArcInfoEx &ai = op.codecs->Formats[formatIndex];
       if (ai.FindExtension(extension) >= 0)
       {
-        const CArcInfoEx &ai = op.codecs->Formats[formatIndex];
         if (ai.Flags_FindSignature() && searchMarkerInHandler)
           return S_FALSE;
       }
@@ -2260,7 +2295,7 @@ HRESULT CArc::OpenStream2(const COpenOptions &op)
       int index = orderIndices[i];
       if (index < 0)
         continue;
-      const CArcInfoEx &ai = op.codecs->Formats[index];
+      const CArcInfoEx &ai = op.codecs->Formats[(unsigned)index];
       bool isDifficult = false;
       // if (ai.Version < 0x91F) // we don't use parser with old DLL (before 9.31)
       if (!ai.NewInterface)
@@ -2283,7 +2318,7 @@ HRESULT CArc::OpenStream2(const COpenOptions &op)
             continue;
           }
           thereAreHandlersForSearch = true;
-          UInt32 v = HASH_VAL(sig, 0);
+          UInt32 v = HASH_VAL(sig);
           unsigned sigIndex = arc2sig[(unsigned)index] + k;
           prevs[sigIndex] = hash[v];
           hash[v] = (Byte)sigIndex;
@@ -2292,7 +2327,7 @@ HRESULT CArc::OpenStream2(const COpenOptions &op)
       if (isDifficult)
       {
         difficultFormats.Add(index);
-        difficultBools[index] = true;
+        difficultBools[(unsigned)index] = true;
       }
     }
     
@@ -2406,6 +2441,9 @@ HRESULT CArc::OpenStream2(const COpenOptions &op)
         }
       }
 
+      if (bytesInBuf <= (size_t)posInBuf)
+        break;
+
       bool useOffsetCallback = false;
       if (openCallback_Offset)
       {
@@ -2455,17 +2493,19 @@ HRESULT CArc::OpenStream2(const COpenOptions &op)
       scanSize++;
 
       const Byte *buf = byteBuffer + (size_t)posInBuf;
+      const Byte *bufLimit = buf + scanSize;
       size_t ppp = 0;
       
       if (!needCheckStartOpen)
       {
-        for (; ppp < scanSize && hash[HASH_VAL(buf, ppp)] == 0xFF; ppp++);
+        for (; buf < bufLimit && hash[HASH_VAL(buf)] == 0xFF; buf++);
+        ppp = buf - (byteBuffer + (size_t)posInBuf);
         pos += ppp;
-        if (ppp == scanSize)
+        if (buf == bufLimit)
           continue;
       }
       
-      UInt32 v = HASH_VAL(buf, ppp);
+      UInt32 v = HASH_VAL(buf);
       bool nextNeedCheckStartOpen = true;
       unsigned i = hash[v];
       unsigned indexOfDifficult = 0;
@@ -2505,7 +2545,7 @@ HRESULT CArc::OpenStream2(const COpenOptions &op)
           const CByteBuffer &sig = ai.Signatures[sigIndex];
 
           if (ppp + sig.Size() > availSize
-              || !TestSignature(buf + ppp, sig, sig.Size()))
+              || !TestSignature(buf, sig, sig.Size()))
             continue;
           // printf("\nSignature OK: %10S %8x %5d", (const wchar_t *)ai.Name, (int)pos, (int)(pos - prevPos));
           // prevPos = pos;
@@ -2912,10 +2952,10 @@ HRESULT CArc::OpenStream(const COpenOptions &op)
 #ifdef _SFX
 
 #ifdef _WIN32
-  static const char *k_ExeExt = ".exe";
+  #define k_ExeExt ".exe"
   static const unsigned k_ExeExt_Len = 4;
 #else
-  static const char *k_ExeExt = "";
+  #define k_ExeExt ""
   static const unsigned k_ExeExt_Len = 0;
 #endif
 
@@ -2978,10 +3018,10 @@ HRESULT CArc::OpenStreamOrFile(COpenOptions &op)
         if (ai.IsSplit())
           continue;
         UString path3 = path2;
-        path3 += L'.';
+        path3 += '.';
         path3 += ai.GetMainExt(); // "7z"  for SFX.
         Path = path3;
-        Path.AddAscii(".001");
+        Path += ".001";
         bool isOk = op.callbackSpec->SetSecondFileInfo(us2fs(Path));
         if (!isOk)
         {
@@ -3432,6 +3472,8 @@ static bool ParseTypeParams(const UString &s, COpenType &type)
 bool ParseType(CCodecs &codecs, const UString &s, COpenType &type)
 {
   int pos2 = s.Find(L':');
+
+  {
   UString name;
   if (pos2 < 0)
   {
@@ -3466,13 +3508,15 @@ bool ParseType(CCodecs &codecs, const UString &s, COpenType &type)
   }
   
   type.FormatIndex = index;
+
+  }
  
   for (unsigned i = pos2; i < s.Len();)
   {
     int next = s.Find(L':', i);
     if (next < 0)
       next = s.Len();
-    UString name = s.Mid(i, next - i);
+    const UString name = s.Mid(i, next - i);
     if (name.IsEmpty())
       return false;
     if (!ParseTypeParams(name, type))

@@ -10,7 +10,7 @@ SET VCVars=C:\Program Files (x86)\Microsoft Visual Studio 10.0\Common7\Tools\vsv
 CALL "%VCVars%" || GOTO :Err
 CD CPP\7zip || GOTO :Err
 :: Cleanup
-IF (.%1.==.rebuild.) (
+IF .%1.==.rebuild. (
 	DEL /Q /S *.exe *.dll *.obj *.lib *.exp *.res *.pch *.asm || GOTO :Err
 )
 :: Build

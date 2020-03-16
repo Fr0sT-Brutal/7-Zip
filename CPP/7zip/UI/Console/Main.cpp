@@ -108,6 +108,7 @@ static const char * const kHelpString =
     "  -ax[r[-|0]]{@listfile|!wildcard} : eXclude archives\n"
     "  -ao{a|s|t|u} : set Overwrite mode\n"
     "  -an : disable archive_name field\n"
+    "  -ba : disable log output totally\n"
     "  -bb[0-3] : set output log level\n"
     "  -bd : disable progress indicator\n"
     "  -bs{o|e|p}{0|1|2} : set output stream for output/error/progress line\n"
@@ -1069,7 +1070,7 @@ int Main2(
       uo.SfxModule = kDefaultSfxModule;
 
     COpenCallbackConsole openCallback;
-    openCallback.Init(g_StdStream, g_ErrStream, percentsStream);
+    openCallback.Init(options.EnableHeaders ? g_StdStream : NULL, g_ErrStream, percentsStream);
 
     #ifndef _NO_CRYPTO
     bool passwordIsDefined =
@@ -1094,7 +1095,7 @@ int Main2(
     callback.StdOutMode = uo.StdOutMode;
     callback.Init(
       // NULL,
-      g_StdStream, g_ErrStream, percentsStream);
+      options.EnableHeaders ? g_StdStream : NULL, g_ErrStream, percentsStream);
 
     CUpdateErrorInfo errorInfo;
 
@@ -1117,7 +1118,8 @@ int Main2(
 
     retCode = WarningsCheck(hresultMain, callback, errorInfo,
         g_StdStream, se,
-        true // options.EnableHeaders
+        //true 
+		options.EnableHeaders
         );
   }
   else if (options.Command.CommandType == NCommandType::kHash)

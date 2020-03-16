@@ -47,14 +47,8 @@ CStdOutStream & endl(CStdOutStream & outStream) throw()
 
 CStdOutStream & CStdOutStream::operator<<(const wchar_t *s)
 {
-  int codePage = g_CodePage;
-  if (codePage == -1)
-    codePage = CP_OEMCP;
   AString dest;
-  if (codePage == CP_UTF8)
-    ConvertUnicodeToUTF8(s, dest);
-  else
-    UnicodeStringToMultiByte2(dest, s, (UINT)codePage);
+  StdOut_Convert_UString_to_AString(s, dest);
   return operator<<((const char *)dest);
 }
 
@@ -62,6 +56,10 @@ void StdOut_Convert_UString_to_AString(const UString &s, AString &temp)
 {
   int codePage = g_CodePage;
   if (codePage == -1)
+  #ifdef _WIN32
+    codePage = GetConsoleOutputCP();
+  if (codePage == 0)
+  #endif
     codePage = CP_OEMCP;
   if (codePage == CP_UTF8)
     ConvertUnicodeToUTF8(s, temp);
